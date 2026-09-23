@@ -253,6 +253,19 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
       </div>
 
       <div class="blk">
+        <h2>轄區範圍</h2>
+        <div class="fld">
+          <label>視為「轄區內」的縣市／行政區</label>
+          <input type="text" id="zone" value="臺北市" placeholder="例：臺北市　或　臺北市信義區,臺北市松山區">
+          <div class="hint">以逗號分隔。<b>獻金申報檔沒有選區欄位</b>，
+            系統無法自動判斷議員或立委的選區，預設以縣市層級認定；
+            若你知道該員選區，請自行填入行政區。</div>
+        </div>
+        <label class="chk"><input type="checkbox" id="zoneSplit" checked> 在關聯圖上把轄區外捐獻者另外分區標示</label>
+        <div class="hint">個人捐獻者用申報檔地址（已遮罩到行政區），企業改用稅籍營業地址。</div>
+      </div>
+
+      <div class="blk">
         <h2>支出端</h2>
         <div class="fld">
           <label>企業支出門檻：占總支出 ≥ <b id="vPct">1.0</b>%</label>
@@ -298,7 +311,8 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
       <div class="blk legend">
         <h2>圖例</h2>
         <div><i class="sw" style="background:var(--ink)"></i>查詢對象</div>
-        <div><i class="sw" style="background:var(--donate)"></i>捐獻者／捐獻企業</div>
+        <div><i class="sw" style="background:var(--donate)"></i>捐獻者（轄區內）</div>
+        <div><i class="sw" style="background:#7A5EA8"></i>捐獻者（轄區外）</div>
         <div><i class="sw" style="background:var(--spend)"></i>支出企業（達門檻）</div>
         <div><i class="sw" style="background:var(--salary)"></i>薪資／勞務報酬對象</div>
         <div><i class="sw" style="background:var(--group)"></i>關聯企業／任職企業</div>
@@ -314,7 +328,9 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
         </div>
         <label class="chk"><input type="checkbox" id="expTitle" checked> 輸出時加上標題與製表時間</label>
         <button class="btn p" id="btnExport" style="width:100%">輸出圖檔</button>
-        <div class="hint" style="margin-top:6px"><b>雙擊</b>任一節點可改以該企業／人物為中心重新查詢。單擊看明細、拖曳排版、<kbd>滾輪</kbd>縮放、拖背景平移、<kbd>R</kbd>重置。</div>
+        <div class="hint" style="margin-top:6px"><b>雙擊</b>任一節點可改以該企業／人物為中心重新查詢。單擊看明細。<br>
+        拖曳可排版：預設移動單一節點，按住 <kbd>Shift</kbd> 拖曳或切換成「拖曳整組」可整個集團一起移動，
+        也可以直接抓集團方框的邊框或標題來拖。<kbd>滾輪</kbd>縮放、拖背景平移、<kbd>R</kbd>重置。</div>
       </div>
     </aside>
 
@@ -323,6 +339,9 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
       <div class="stagebar">
         <span class="chip" id="netInfo">尚未查詢</span>
         <span class="zoom"><button id="zIn" title="放大">＋</button><button id="zOut" title="縮小">−</button><button id="zFit" title="重置版面">⟲</button></span>
+        <span class="zoom" title="拖曳節點時要移動單一項目還是整個集團">
+          <button id="dragOne" class="on">拖曳單一</button><button id="dragGrp">拖曳整組</button>
+        </span>
       </div>
       <div class="empty" id="netEmpty">
         <strong>先查詢一位政治人物或一家企業</strong>
@@ -400,6 +419,7 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
         <h2>跨申報人比對</h2>
         <select id="p5kind">
           <option value="multi-donor">同一企業捐給多位申報人</option>
+          <option value="group-donor">同一集團用哪些企業捐給哪些申報人</option>
           <option value="addr-donor">同一營業地址的企業捐給多位申報人</option>
           <option value="multi-salary">同一薪資對象出現在多位申報人帳上</option>
           <option value="both-sides">同一企業既是捐獻者又是支出對象</option>
@@ -165105,7 +165125,8 @@ function detectGroups(nodes, opt) {
       kinds.has('rep') ? '代表法人' : '',
       kinds.has('addr') ? ((opt.useBldg ? '同棟' : '同址') + (brand ? '（同字號）' : '')) : '',
       kinds.has('hq') ? '總機構' : ''].filter(Boolean).join('＋');
-    g.label = '集團 ' + g.no + (g.basis ? '〔' + g.basis + '〕' : '');
+    g.short = '集團 ' + g.no;
+    g.label = g.short + (g.basis ? '〔' + g.basis + '〕' : '');
     g.bans.forEach(b => map.set(b, g));
   });
   return { groups, map };
@@ -165245,6 +165266,17 @@ function recompute() {
     S.salary = ($('#showSal').checked ? sal.slice(0, +$('#topSal').value) : [])
       .map(c => (c.side = 'out', c.dtype = 'salary', c));
 
+    const toks = zoneTokens();
+    let outAmt = 0, outCnt = 0, unk = 0;
+    S.donAll.forEach(d => {
+      d.dist = distOfNode(d);
+      const z = inZone(d.dist, toks);
+      d.outZone = z === false;
+      if (z === null) unk++;
+      if (d.outZone) { outAmt += d.amt; outCnt++; }
+    });
+    S.zone = { toks, outAmt, outCnt, unknown: unk,
+               inAmt: S.donAll.reduce((a, d) => a + d.amt, 0) - outAmt };
     const g = detectGroups(S.don.concat(S.spendCo), groupOpt());
     S.groups = g.groups; S.gmap = g.map;
   } else if (S.kind === 'person') {
@@ -165390,6 +165422,36 @@ function curTab() {
   return t ? t.dataset.p : 'p1';
 }
 
+/* ═══════════════════════════ 2z. 轄區判定 ═══════════════════════════ */
+const _cityRe = /^(.{1,3}?[市縣])(.{1,4}?[區鄉鎮市])/;
+
+/** 取得「縣市＋行政區」；個人用申報檔地址，企業改用稅籍營業地址 */
+function distOfNode(n) {
+  let a = '';
+  if (n.rows && n.rows.length) {
+    for (const r of n.rows) { if (r.ad) { a = r.ad; break; } }
+  }
+  if (!a && n.ban) {
+    const ai = addrOf(n.ban);
+    if (ai) a = ai.full;
+  }
+  if (!a) return '';
+  const m = _cityRe.exec(String(a).replace(/台/g, '臺'));
+  return m ? m[1] + m[2] : '';
+}
+
+function zoneTokens() {
+  return ($('#zone').value || '').split(/[,，、\s]+/).filter(Boolean)
+    .map(x => x.replace(/台/g, '臺'));
+}
+
+/** '' = 無法判斷（不計入轄區外）；true = 轄區內 */
+function inZone(dist, toks) {
+  if (!dist) return null;
+  if (!toks.length) return true;
+  return toks.some(t => dist.startsWith(t) || t.startsWith(dist));
+}
+
 /* ═══════════════════════════ 2b. 表格排序 ═══════════════════════════ */
 /** 解析表頭格線，處理 rowspan / colspan，回傳每個 th 對應的欄索引 */
 function headerGrid(thead) {
@@ -165505,7 +165567,7 @@ function applySort(sel) {
 /* ═══════════════════════════ 3. 關聯圖 ═══════════════════════════ */
 const C = {
   ink: '#152A3F', ink2: '#4E606F', ink3: '#7C8B98',
-  donate: '#1F6FB2', spend: '#A6392C', salary: '#4A7A54', group: '#8A6415',
+  donate: '#1F6FB2', outzone: '#7A5EA8', spend: '#A6392C', salary: '#4A7A54', group: '#8A6415',
   boxfill: '#FDF8EC', halo: '#FAFBFC', rule2: '#E3E8ED'
 };
 const G = { tx: 0, ty: 0, k: 1, nodes: [], edges: [], pos: new Map(), pinned: null };
@@ -165514,7 +165576,7 @@ const CFG = { rowH: 30, colW: 250, cap: 26, cx: 0, cy: 0, gapLR: 330, blockGap: 
 function nodeColor(n) {
   if (n.role === 'center') return C.ink;
   if (n.dtype === 'sibling' || n.dtype === 'jobco') return C.group;
-  if (n.side === 'in') return C.donate;
+  if (n.side === 'in') return n.outZone ? C.outzone : C.donate;
   return n.dtype === 'salary' ? C.salary : C.spend;
 }
 
@@ -165554,8 +165616,17 @@ function layout() {
     return cols;
   };
 
-  const hL = Math.min(left.length, Math.max(CFG.cap, Math.ceil(left.length / 3))) * CFG.rowH;
-  place(left, -1, -hL / 2);
+  const split = $('#zoneSplit').checked && S.kind === 'pol';
+  const lIn = split ? left.filter(d => !d.outZone) : left;
+  const lOut = split ? left.filter(d => d.outZone) : [];
+  const perI = Math.max(CFG.cap, Math.ceil(lIn.length / 3));
+  const hI = Math.min(lIn.length, perI) * CFG.rowH;
+  const perO = Math.max(CFG.cap, Math.ceil(lOut.length / 3));
+  const hO = Math.min(lOut.length, perO) * CFG.rowH;
+  const totL = hI + (hI && hO ? CFG.blockGap : 0) + hO;
+  place(lIn, -1, -totL / 2);
+  place(lOut, -1, -totL / 2 + hI + (hI && hO ? CFG.blockGap : 0));
+  G.lOutCount = lOut.length;
 
   const perR = Math.max(CFG.cap, Math.ceil(right.length / 3));
   const hR = Math.min(right.length, perR) * CFG.rowH;
@@ -165594,11 +165665,13 @@ function groupBoxes() {
       const lab = list.map(n => (n.name || '').length).reduce((a, b) => Math.max(a, b), 4);
       const dir = list[0].dir;
       const padTxt = lab * 13 + 18;
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      // 寬度要同時容納標籤長度與節點被拖開後的水平距離，否則拖曳後方框會蓋不住成員
       boxes.push({
         g, first,
-        x: (dir < 0 ? Math.min(...xs) - padTxt : Math.min(...xs) - 20),
+        x: (dir < 0 ? minX - padTxt : minX - 20),
         y: Math.min(...ys) - 15,
-        w: padTxt + 40,
+        w: (maxX - minX) + padTxt + 40,
         h: (Math.max(...ys) - Math.min(...ys)) + 30,
         n: list.length
       });
@@ -165633,16 +165706,31 @@ function render() {
     gBox.appendChild(SVGEL('rect', {
       x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
       fill: C.boxfill, stroke: C.group, 'stroke-width': 1.4,
-      'stroke-dasharray': '6 4'
+      'stroke-dasharray': '6 4', 'pointer-events': 'none'
     }));
+    // 透明的粗邊框當作拖曳把手，抓邊框就能移動整組
+    const handle = SVGEL('rect', {
+      x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
+      fill: 'none', stroke: 'transparent', 'stroke-width': 14,
+      'pointer-events': 'stroke'
+    });
+    handle.style.cursor = 'move';
+    handle.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, handle));
+    handle.addEventListener('mouseenter', e => tipGroup(e, b.g));
+    handle.addEventListener('mousemove', moveTip);
+    handle.addEventListener('mouseleave', hideTip);
+    gBox.appendChild(handle);
     if (b.first) {
       const t = SVGEL('text', {
         x: b.x + 8, y: b.y - 5, 'font-size': 12, fill: C.group,
-        'font-weight': 600, text: b.g.label + '（' + b.g.bans.length + ' 家）'
+        'font-weight': 600, text: b.g.short + '（' + b.g.bans.length + ' 家）'
+          + (b.g.basis ? '　' + b.g.basis : '')
       });
-      t.style.cursor = 'pointer';
-      t.addEventListener('click', () => showGroup(b.g));
+      t.style.cursor = 'move';
+      t.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, t));
+      t.addEventListener('click', () => { if (!drag.did) showGroup(b.g); });
       t.addEventListener('mouseenter', e => tipGroup(e, b.g));
+      t.addEventListener('mousemove', moveTip);
       t.addEventListener('mouseleave', hideTip);
       gBox.appendChild(t);
     }
@@ -165652,14 +165740,28 @@ function render() {
   const heads = [];
   const LT = { pol: '捐獻來源', comp: '關聯企業', person: '任職企業' };
   const RT = { pol: '支出對象', comp: '相關政治人物', person: '支付薪資之申報人' };
-  if (S.don.length) heads.push({ t: LT[S.kind] || '', dir: -1 });
+  if (S.don.length) {
+    if (S.kind === 'pol' && $('#zoneSplit').checked && G.lOutCount) {
+      const inY = G.nodes.filter(n => n.dir === -1 && !n.outZone).map(n => n.y);
+      const outY = G.nodes.filter(n => n.dir === -1 && n.outZone).map(n => n.y);
+      if (inY.length) heads.push({ t: '捐獻來源（轄區內）', dir: -1, y: Math.min(...inY) - 34 });
+      if (outY.length) heads.push({ t: '捐獻來源（轄區外）', dir: -1, y: Math.min(...outY) - 34,
+                                    warn: true });
+    } else heads.push({ t: LT[S.kind] || '', dir: -1 });
+  }
   if (S.spendCo.length || S.salary.length) heads.push({ t: RT[S.kind] || '', dir: 1 });
   heads.forEach(h => {
-    const ys = G.nodes.filter(n => n.dir === h.dir).map(n => n.y);
-    if (!ys.length) return;
+    let y = h.y;
+    if (y == null) {
+      const ys = G.nodes.filter(n => n.dir === h.dir).map(n => n.y);
+      if (!ys.length) return;
+      y = Math.min(...ys) - 40;
+    }
     gHead.appendChild(SVGEL('text', {
-      x: h.dir * CFG.gapLR, y: Math.min(...ys) - 40,
-      'text-anchor': 'middle', 'font-size': 13, fill: C.ink3,
+      x: h.dir * CFG.gapLR, y,
+      'text-anchor': 'middle', 'font-size': 13,
+      fill: h.warn ? C.outzone : C.ink3,
+      'font-weight': h.warn ? 600 : 400,
       'letter-spacing': '.1em', text: h.t
     }));
   });
@@ -165724,6 +165826,11 @@ function render() {
     parts.push('捐獻 ' + S.don.length + '/' + S.donAll.length + ' 筆對象');
     parts.push('支出企業 ' + S.spendCo.length + '/' + S.spendCoAll.length);
     parts.push('薪資對象 ' + S.salary.length + '/' + S.salaryAll.length);
+    if (S.zone && S.zone.outCnt) {
+      parts.push('轄區外捐獻 ' + S.zone.outCnt + ' 個對象／' + money(S.zone.outAmt)
+        + ' 元（占 ' + pct(S.zone.outAmt, S.zone.outAmt + S.zone.inAmt) + '）');
+    }
+    if (S.zone && S.zone.unknown) parts.push('地址無法判斷 ' + S.zone.unknown);
   } else if (S.kind === 'person') {
     parts.push('任職企業 ' + S.don.length, '支付薪資之申報人 ' + S.spendCo.length);
     if (S.person.freq > 1) parts.push('⚠ 全國同名董監事 ' + S.person.freq + ' 家');
@@ -165757,38 +165864,82 @@ function applyTransform() {
     'translate(' + (r.width / 2 + G.tx) + ',' + (r.height / 2 + G.ty) + ') scale(' + G.k + ')');
 }
 
-/* 拖曳 */
+/* 拖曳：可移動單一節點，或整個集團一起移動 */
+let DRAGMODE = Store.get('dragMode', 'one');      // 'one' | 'group'
 const drag = { on: null, did: false };
-function startDrag(ev, n, g) {
+
+/** 決定這次要移動哪些節點 */
+function movingSet(n, ev) {
+  const whole = (DRAGMODE === 'group' || (ev && ev.shiftKey)) && n.role !== 'center';
+  if (!whole || !n.ban) return [n];
+  const g = S.gmap.get(n.ban);
+  if (!g) return [n];
+  const set = new Set(g.bans);
+  const list = G.nodes.filter(x => x.ban && set.has(x.ban));
+  return list.length ? list : [n];
+}
+
+/** 共用的拖曳流程；list 為要一起移動的節點 */
+function beginDrag(ev, list, captureEl) {
   if (ev.button !== 0) return;
   ev.stopPropagation();
-  drag.on = { n, g, sx: ev.clientX, sy: ev.clientY, ox: n.x, oy: n.y };
+  const origins = list.map(n => ({ n, ox: n.x, oy: n.y }));
+  drag.on = { origins, sx: ev.clientX, sy: ev.clientY };
   drag.did = false;
-  g.setPointerCapture(ev.pointerId);
+  try { captureEl.setPointerCapture(ev.pointerId); } catch (e) {}
+  const moved = new Set(list);
+  const centerMoved = list.some(n => n.role === 'center');
   const mv = e => {
-    const d = drag.on; if (!d) return;
+    const d = drag.on;
+    if (!d) return;
     const dx = (e.clientX - d.sx) / G.k, dy = (e.clientY - d.sy) / G.k;
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.did = true;
-    d.n.x = d.ox + dx; d.n.y = d.oy + dy;
-    d.g.setAttribute('transform', 'translate(' + d.n.x + ',' + d.n.y + ')');
-    G.edges.forEach(ed => {
-      if (ed.node === d.n || d.n.role === 'center') ed.el.setAttribute('d', edgePath(G.center, ed.node));
+    d.origins.forEach(o => {
+      o.n.x = o.ox + dx; o.n.y = o.oy + dy;
+      if (o.n.el) o.n.el.setAttribute('transform', 'translate(' + o.n.x + ',' + o.n.y + ')');
     });
+    G.edges.forEach(ed => {
+      if (centerMoved || moved.has(ed.node)) {
+        ed.el.setAttribute('d', edgePath(G.center, ed.node));
+      }
+    });
+    redrawBoxes();
     hideTip();
   };
   const up = () => {
     if (drag.on && drag.did) {
-      G.pos.set(drag.on.n.key, { x: drag.on.n.x, y: drag.on.n.y });
+      drag.on.origins.forEach(o => G.pos.set(o.n.key, { x: o.n.x, y: o.n.y }));
       redrawBoxes();
     }
     drag.on = null;
-    g.removeEventListener('pointermove', mv);
-    g.removeEventListener('pointerup', up);
-    setTimeout(() => drag.did = false, 30);
+    captureEl.removeEventListener('pointermove', mv);
+    captureEl.removeEventListener('pointerup', up);
+    setTimeout(() => { drag.did = false; }, 30);
   };
-  g.addEventListener('pointermove', mv);
-  g.addEventListener('pointerup', up);
+  captureEl.addEventListener('pointermove', mv);
+  captureEl.addEventListener('pointerup', up);
 }
+
+function startDrag(ev, n, g) {
+  beginDrag(ev, movingSet(n, ev), g);
+}
+
+/** 由集團方框（邊框或標題）發動的整組拖曳 */
+function startGroupDrag(ev, grp, el) {
+  const set = new Set(grp.bans);
+  const list = G.nodes.filter(x => x.ban && set.has(x.ban));
+  if (!list.length) return;
+  beginDrag(ev, list, el);
+}
+
+function setDragMode(m) {
+  DRAGMODE = m;
+  Store.set('dragMode', m);
+  const a = $('#dragOne'), b = $('#dragGrp');
+  if (a) a.classList.toggle('on', m === 'one');
+  if (b) b.classList.toggle('on', m === 'group');
+}
+
 function redrawBoxes() {
   if (!VP) return;
   const gBox = VP.firstChild;
@@ -165796,12 +165947,27 @@ function redrawBoxes() {
   groupBoxes().forEach(b => {
     gBox.appendChild(SVGEL('rect', {
       x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
-      fill: C.boxfill, stroke: C.group, 'stroke-width': 1.4, 'stroke-dasharray': '6 4'
+      fill: C.boxfill, stroke: C.group, 'stroke-width': 1.4,
+      'stroke-dasharray': '6 4', 'pointer-events': 'none'
     }));
-    if (b.first) gBox.appendChild(SVGEL('text', {
-      x: b.x + 8, y: b.y - 5, 'font-size': 12, fill: C.group, 'font-weight': 600,
-      text: b.g.label + '（' + b.g.bans.length + ' 家）'
-    }));
+    const handle = SVGEL('rect', {
+      x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
+      fill: 'none', stroke: 'transparent', 'stroke-width': 14, 'pointer-events': 'stroke'
+    });
+    handle.style.cursor = 'move';
+    handle.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, handle));
+    gBox.appendChild(handle);
+    if (b.first) {
+      const t = SVGEL('text', {
+        x: b.x + 8, y: b.y - 5, 'font-size': 12, fill: C.group, 'font-weight': 600,
+        text: b.g.short + '（' + b.g.bans.length + ' 家）'
+          + (b.g.basis ? '　' + b.g.basis : '')
+      });
+      t.style.cursor = 'move';
+      t.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, t));
+      t.addEventListener('click', () => { if (!drag.did) showGroup(b.g); });
+      gBox.appendChild(t);
+    }
   });
 }
 
@@ -165828,6 +165994,9 @@ function initStage() {
   });
   svg.addEventListener('pointerup', () => { pan = null; svg.classList.remove('grab'); });
   svg.addEventListener('pointerleave', () => { pan = null; svg.classList.remove('grab'); });
+  $('#dragOne').onclick = () => setDragMode('one');
+  $('#dragGrp').onclick = () => setDragMode('group');
+  setDragMode(DRAGMODE);
   $('#zIn').onclick = () => { G.k = clamp(G.k * 1.2, .12, 4); applyTransform(); };
   $('#zOut').onclick = () => { G.k = clamp(G.k / 1.2, .12, 4); applyTransform(); };
   $('#zFit').onclick = resetView;
@@ -165865,6 +166034,9 @@ function tipNode(ev, n) {
   const bits = [];
   if (n.ban) bits.push('統編 ' + n.ban);
   if (n.id && !n.ban) bits.push('身分證 ' + n.id);
+  if (n.side === 'in' && n.dist) {
+    bits.push(n.dist + (n.outZone ? '（轄區外）' : '（轄區內）'));
+  } else if (n.side === 'in') bits.push('地址無法判斷');
   if (n.dtype === 'salary') bits.push('自然人／薪資對象');
   if (n.dtype === 'politician') bits.push('申報人');
   const g = n.ban && S.gmap.get(n.ban);
@@ -166579,6 +166751,51 @@ async function pool(list, n, fn, onEach) {
   return out;
 }
 
+/** 對任意一組統編做集團判定，回傳查表函式與彙總 */
+function groupIndex(bans) {
+  const uniq = Array.from(new Set(bans.filter(Boolean)));
+  const g = detectGroups(uniq.map(b => ({ ban: b })), groupOpt());
+  const of = b => g.map.get(b) || null;
+  const rank = b => {
+    const x = of(b);
+    return x ? String(1e6 - x.bans.length * 1000 - x.no).padStart(9, '0') : 'zzzzzzzzz';
+  };
+  return { groups: g.groups, of, rank };
+}
+
+const GBADGE = g => g
+  ? '<span class="pill g" title="' + esc(g.basis || '') + '">' + esc(g.short || g.label)
+    + '</span><div class="sub">' + esc(g.basis || '') + '</div>'
+  : '<span class="sub">—</span>';
+
+/** 集團彙總表（件數／金額）*/
+function groupSummary(gi, rows, keyOf, statOf, cols) {
+  const m = new Map();
+  rows.forEach(r => {
+    const g = gi.of(keyOf(r));
+    if (!g) return;
+    let e = m.get(g.no);
+    if (!e) m.set(g.no, e = { g, cos: new Set(), vals: cols.map(() => 0) });
+    e.cos.add(keyOf(r));
+    const v = statOf(r);
+    cols.forEach((c, i) => { e.vals[i] += v[i] || 0; });
+  });
+  if (!m.size) return '';
+  const list = Array.from(m.values()).sort((a, b) => b.vals[0] - a.vals[0]);
+  return '<details class="grp" open><summary>集團彙總（' + list.length
+    + ' 組，同集團／同址同棟的企業已合併計算）</summary>'
+    + '<table class="grid"><thead><tr><th>集團</th><th>認定依據</th>'
+    + '<th class="n">企業數</th>'
+    + cols.map(c => '<th class="n">' + c + '</th>').join('')
+    + '<th>成員</th></tr></thead><tbody>'
+    + list.map(e => '<tr><td>' + esc(e.g.short || e.g.label) + '</td><td class="sub">' + esc(e.g.basis || '')
+      + '</td><td class="n">' + e.cos.size + '</td>'
+      + e.vals.map(v => '<td class="n">' + nf.format(Math.round(v)) + '</td>').join('')
+      + '<td class="sub">' + Array.from(e.cos).map(b => esc(coName(b))).join('、')
+      + '</td></tr>').join('')
+    + '</tbody></table></details>';
+}
+
 /* ═══════════════════════════ 8. 分頁③ 兼任企業標案 ═══════════════════════════ */
 function companySetFor(src) {
   const m = new Map();
@@ -166628,7 +166845,7 @@ async function runTab3() {
   renderTab3(res);
 }
 
-let T3 = [];
+let T3 = [], T3ORD = [];
 function renderTab3(res) {
   T3 = res;
   const all = [];
@@ -166649,20 +166866,25 @@ function renderTab3(res) {
     + '<b>金額判讀注意：</b>「總決標金額」是<b>整個標案</b>的決標金額，'
     + '多家共同得標或分項決標時，並非該公司實得金額；表中「得標家數」>1 者請回原公告核對。'
     + '採購網資料涵蓋自 2010-01-02（刊登公報）／2012-06-19（不刊登公報）起。</div>';
-  h += '<table class="grid"><thead><tr><th>企業</th><th>來源</th>'
+  h += '<table class="grid"><thead><tr><th>企業</th><th>集團</th><th>來源</th>'
     + '<th class="n">北市件數</th><th class="n">北市金額</th>'
     + '<th class="n">其他件數</th><th class="n">其他金額</th>'
     + '<th class="n">待確認</th><th class="n">合計件數</th><th class="n">合計金額</th>'
     + '</tr></thead><tbody>';
-  res.slice().sort((a, b2) => {
-    const s = x => x.items.reduce((t, i) => t + (i.amt || 0), 0);
-    return s(b2) - s(a);
-  }).forEach((r, i) => {
+  const GI3 = groupIndex(res.map(r => r.c.ban));
+  const amtOf = x => x.items.reduce((t, i) => t + (i.amt || 0), 0);
+  const ord3 = res.slice().sort((a, b2) =>
+    (GI3.rank(a.c.ban) < GI3.rank(b2.c.ban) ? -1 : GI3.rank(a.c.ban) > GI3.rank(b2.c.ban) ? 1 : 0)
+    || amtOf(b2) - amtOf(a));
+  T3ORD = ord3;
+  ord3.forEach((r, i) => {
     const bb = statBucket(r.items);
+    const gg = GI3.of(r.c.ban);
     h += '<tr data-i="' + i + '" style="cursor:pointer"><td><b>' + esc(r.c.name || r.c.ban) + '</b>'
       + '<div class="sub">' + r.c.ban + (r.error ? '　<span style="color:#A6392C">' + esc(r.error) + '</span>' : '')
       + (r.meta && r.meta.capped ? '　<span style="color:#8C4A00">公告筆數超過查詢上限，統計可能不完整</span>' : '')
       + '</div></td>'
+      + '<td>' + GBADGE(gg) + '</td>'
       + '<td class="sub">' + esc(Array.from(r.c.tags).join('、')) + '</td>'
       + '<td class="n">' + bb.tp.n + '</td><td class="n">' + money(bb.tp.amt) + '</td>'
       + '<td class="n">' + bb.other.n + '</td><td class="n">' + money(bb.other.amt) + '</td>'
@@ -166670,14 +166892,15 @@ function renderTab3(res) {
       + '<td class="n"><b>' + bb.all.n + '</b></td><td class="n"><b>' + money(bb.all.amt) + '</b></td></tr>';
   });
   h += '</tbody></table>';
-  $('#p3body').innerHTML = h;
+  const sumHtml = groupSummary(GI3, res, r => r.c.ban,
+    r => { const b = statBucket(r.items);
+           return [b.all.amt, b.all.n, b.tp.n, b.tp.amt]; },
+    ['合計金額', '合計件數', '北市件數', '北市金額']);
+  $('#p3body').innerHTML = sumHtml + h;
   applySort('#p3body');
-  $$('#p3body tbody tr').forEach(tr => tr.onclick = () => {
-    const r = res.slice().sort((a, b2) => {
-      const s = x => x.items.reduce((t, i) => t + (i.amt || 0), 0);
-      return s(b2) - s(a);
-    })[+tr.dataset.i];
-    caseModal(r.c, r.items);
+  $$('#p3body tbody tr[data-i]').forEach(tr => tr.onclick = () => {
+    const r = T3ORD[+tr.dataset.i];
+    if (r) caseModal(r.c, r.items);
   });
 }
 
@@ -166715,7 +166938,7 @@ function tab3CSV() {
 }
 
 /* ═══════════════════════════ 9. 分頁④ 捐獻企業前後比較 ═══════════════════════════ */
-let T4 = [];
+let T4 = [], T4ORD = [];
 async function runTab4() {
   if (S.kind !== 'pol') return alert('請先查詢一位政治人物。');
   const donors = (S.donAll || []).filter(d => d.ban);
@@ -166780,7 +167003,8 @@ function renderTab4(res) {
     + '「捐款前／後」以基準日切分，金額為標案總決標金額（非該公司實得）。'
     + '無決標日期者以公告日替代，仍無日期者計入「無法歸期」。</div>';
   h += '<table class="grid"><thead>'
-    + '<tr><th rowspan="2">捐獻企業</th><th rowspan="2" class="n">捐獻金額</th>'
+    + '<tr><th rowspan="2">捐獻企業</th><th rowspan="2">集團</th>'
+    + '<th rowspan="2" class="n">捐獻金額</th>'
     + '<th rowspan="2" class="n">基準日</th>'
     + '<th colspan="4" style="text-align:center">捐款前</th>'
     + '<th colspan="4" style="text-align:center">捐款後</th>'
@@ -166788,13 +167012,20 @@ function renderTab4(res) {
     + '<tr><th class="n g2">北市件</th><th class="n g2">北市金額</th><th class="n g2">全部件</th><th class="n g2">北市占比</th>'
     + '<th class="n g2">北市件</th><th class="n g2">北市金額</th><th class="n g2">全部件</th><th class="n g2">北市占比</th>'
     + '</tr></thead><tbody>';
-  res.slice().sort((a, b) => b.d.amt - a.d.amt).forEach((r, i) => {
+  const GI4 = groupIndex(res.map(r => r.d.ban));
+  const ord4 = res.slice().sort((a, b) =>
+    (GI4.rank(a.d.ban) < GI4.rank(b.d.ban) ? -1 : GI4.rank(a.d.ban) > GI4.rank(b.d.ban) ? 1 : 0)
+    || b.d.amt - a.d.amt);
+  T4ORD = ord4;
+  ord4.forEach((r, i) => {
     const B = r.s.before, A = r.s.after;
+    const gg = GI4.of(r.d.ban);
     h += '<tr data-i="' + i + '" style="cursor:pointer"><td><b>' + esc(r.d.name) + '</b>'
       + '<div class="sub">' + r.d.ban
       + (r.error ? '　<span style="color:#A6392C">' + esc(r.error) + '</span>' : '')
       + (r.meta && r.meta.capped ? '　<span style="color:#8C4A00">超過查詢上限</span>' : '')
       + '</div></td>'
+      + '<td>' + GBADGE(gg) + '</td>'
       + '<td class="n">' + money(r.d.amt) + '<div class="sub">' + r.d.cnt + ' 筆</div></td>'
       + '<td class="n">' + (r.ref ? ad2roc(r.ref) : '—') + '</td>'
       + '<td class="n">' + B.tp.n + '</td><td class="n">' + money(B.tp.amt) + '</td>'
@@ -166804,11 +167035,14 @@ function renderTab4(res) {
       + '<td class="n">' + r.s.unknown.all.n + '</td></tr>';
   });
   h += '</tbody></table>';
-  $('#p4body').innerHTML = h;
+  const sum4 = groupSummary(GI4, res, r => r.d.ban,
+    r => [r.d.amt, r.s.before.tp.n, r.s.before.tp.amt, r.s.after.tp.n, r.s.after.tp.amt],
+    ['捐獻金額', '前·北市件', '前·北市金額', '後·北市件', '後·北市金額']);
+  $('#p4body').innerHTML = sum4 + h;
   applySort('#p4body');
-  const sorted = res.slice().sort((a, b) => b.d.amt - a.d.amt);
-  $$('#p4body tbody tr').forEach(tr => tr.onclick = () => {
-    const r = sorted[+tr.dataset.i];
+  $$('#p4body tbody tr[data-i]').forEach(tr => tr.onclick = () => {
+    const r = T4ORD[+tr.dataset.i];
+    if (!r) return;
     caseModal({ name: r.d.name + '（基準日 ' + (r.ref ? ad2roc(r.ref) : '無') + '）', ban: r.d.ban },
       r.items.map(it => Object.assign({}, it,
         { title: (r.ref && it.date ? (it.date < r.ref ? '［捐款前］' : '［捐款後］') : '［無法歸期］') + it.title })));
@@ -166989,6 +167223,7 @@ function settingsDialog() {
 /* ═══════════════════════════ 10b. 分頁⑤ 跨申報人比對 ═══════════════════════════ */
 let T5 = null;
 const P5_TITLE = {
+  'group-donor': '同一集團用哪些企業捐給哪些申報人',
   'multi-donor': '同一企業捐給多位申報人',
   'addr-donor': '同一營業地址的企業捐給多位申報人',
   'multi-salary': '同一薪資對象出現在多位申報人帳上',
@@ -167034,7 +167269,40 @@ function renderTab5() {
     + '<b>' + esc(P5_TITLE[kind]) + '</b>：本表只呈現形式上的重複關係，'
     + '不代表任何不法。金額為政治獻金申報金額，非採購金額。點申報人可直接切換查詢。</div>';
 
-  if (kind === 'multi-donor') {
+  if (kind === 'group-donor') {
+    $('#p5sum').innerHTML = card(nf.format(rows.length), '符合條件的集團')
+      + card(nf.format(rows.reduce((a, r) => a + r.donors, 0)), '涉及捐獻企業（家）')
+      + card(money(rows.reduce((a, r) => a + r.amt, 0)) + ' 元', '捐獻金額合計')
+      + card(nf.format(Math.max(0, ...rows.map(r => r.np))), '單一集團最多觸及申報人');
+    h += '<table class="grid"><thead><tr><th>集團</th><th>認定依據</th>'
+      + '<th class="n">捐獻企業</th><th class="n">申報人數</th><th class="n">金額</th>'
+      + '<th class="n">筆數</th><th>用哪些企業，捐給哪些人</th></tr></thead><tbody>'
+      + rows.map(r => '<tr><td><b>' + esc(r.label) + '</b>'
+        + '<div class="sub">' + esc(r.name) + ' 等 ' + r.members + ' 家</div></td>'
+        + '<td class="sub">' + esc(r.basis) + '</td>'
+        + '<td class="n">' + r.donors + '</td><td class="n"><b>' + r.np + '</b></td>'
+        + '<td class="n">' + money(r.amt) + '</td><td class="n">' + r.cnt + '</td>'
+        + '<td><div class="sub">企業：' + r.cos.map(c =>
+            '<a href="#" class="colnk2" data-b="' + c.ban + '">' + esc(c.name) + '</a>（'
+            + money(c.amt) + '／' + c.np + ' 人）').join('、') + '</div>'
+        + '<div>' + polLinks(r.pols) + '</div></td></tr>').join('')
+      + '</tbody></table>';
+    host.innerHTML = h;
+    applySort('#p5body');
+    $$('#p5body .plnk').forEach(a => a.onclick = ev => {
+      ev.preventDefault(); gotoMain('pol', a.dataset.id); });
+    $$('#p5body .colnk2').forEach(a => a.onclick = ev => {
+      ev.preventDefault(); gotoMain('comp', a.dataset.b); });
+    return;
+  }
+
+  if (kind === 'group-donor') {
+    out = [['集團', '認定依據', '集團成員數', '捐獻企業數', '申報人數', '金額', '筆數',
+            '捐獻企業', '受贈申報人']];
+    rows.forEach(r => out.push([r.label, r.basis, r.members, r.donors, r.np, r.amt, r.cnt,
+      r.cos.map(c => c.name + '(' + c.ban + ':' + Math.round(c.amt) + ')').join('、'),
+      r.pols.map(p => p.name + '(' + Math.round(p.amt) + ')').join('、')]));
+  } else if (kind === 'multi-donor') {
     $('#p5sum').innerHTML = card(nf.format(rows.length), '符合條件的企業（家）')
       + card(nf.format(rows.reduce((a, r) => a + r.np, 0)), '涉及申報人次')
       + card(money(rows.reduce((a, r) => a + r.amt, 0)) + ' 元', '捐獻金額合計');
@@ -167144,7 +167412,10 @@ function renderTab5Graph() {
   // 左側實體、右側申報人
   const left = [], rightMap = new Map(), edges = [];
   list.forEach(r => {
-    const node = kind === 'addr-donor'
+    const node = kind === 'group-donor'
+      ? { key: 'G' + r.gno, name: r.label + '：' + r.name + ' 等 ' + r.donors + ' 家',
+          sub: r.basis + '　' + money(r.amt) + ' 元', kind: 'grp', data: r }
+      : kind === 'addr-donor'
       ? { key: 'A' + r.addr, name: r.addr, sub: r.nb + ' 家企業／該址共 ' + r.total_at_addr + ' 家',
           kind: 'addr', data: r }
       : kind === 'multi-salary'
@@ -167222,7 +167493,7 @@ function renderTab5Graph() {
   });
 
   const COL = { comp: C.spend, addr: C.group, person: C.salary, pol: C.donate,
-                tag: C.ink, rest: C.ink3 };
+                tag: C.ink, rest: C.ink3, grp: '#8A6415' };
   left.concat(right).forEach(n => {
     const g = SVGEL('g', { transform: 'translate(' + n.x + ',' + n.y + ')' });
     const isL = n.x < 0;
@@ -167246,6 +167517,7 @@ function renderTab5Graph() {
       if (drag5.did) return;
       hideTip();
       if (n.kind === 'rest') { setTab5View(false); return; }
+      if (n.kind === 'grp') { groupDonorModal(n.data); return; }
       if (n.kind === 'pol') gotoMain('pol', n.id);
       else if (n.kind === 'comp') gotoMain('comp', n.ban);
       else if (n.kind === 'person') gotoMain('person', n.name);
@@ -167281,10 +167553,42 @@ function tip5(ev, n) {
   else if (n.kind === 'rest') h += '<table><tr><td>彙總</td><td class="n">' + n.deg
     + ' 位申報人</td></tr><tr><td>金額合計</td><td class="n">' + money(n.amt)
     + '</td></tr></table><div class="mo">點一下切回列表看完整名單</div>';
+  else if (n.kind === 'grp' && d) h += '<table><tr><td>認定依據</td><td>' + esc(d.basis)
+    + '</td></tr><tr><td>捐獻企業</td><td class="n">' + d.donors + ' 家</td></tr>'
+    + '<tr><td>申報人數</td><td class="n">' + d.np + '</td></tr>'
+    + '<tr><td>金額</td><td class="n">' + money(d.amt) + '</td></tr></table>'
+    + '<div class="mo">' + esc(d.cos.slice(0, 6).map(c => c.name).join('、')) + '</div>'
+    + '<div class="mo">點一下看完整對照表</div>';
   else if (n.kind === 'pol') h += '<table><tr><td>關聯項目</td><td class="n">' + n.deg
     + '</td></tr><tr><td>金額合計</td><td class="n">' + money(n.amt) + '</td></tr></table>'
     + '<div class="mo">點一下改以此申報人為中心查詢</div>';
   showTip(ev, h);
+}
+
+/** 集團 × 申報人 對照表 */
+function groupDonorModal(d) {
+  const pols = d.pols;
+  openModal('<h2>' + esc(d.label) + '</h2>'
+    + '<p class="hint">認定依據：' + esc(d.basis) + '　集團成員 ' + d.members
+    + ' 家，其中 ' + d.donors + ' 家有捐獻紀錄，合計 ' + money(d.amt)
+    + ' 元，觸及 ' + d.np + ' 位申報人。</p>'
+    + '<table class="grid"><thead><tr><th>捐獻企業</th><th class="n">金額</th>'
+    + pols.map(p => '<th class="n">' + esc(p.name) + '</th>').join('')
+    + '</tr></thead><tbody>'
+    + d.cos.map(c => {
+      const byp = new Map(c.pols.map(x => [x.id, x.amt]));
+      return '<tr><td><a href="#" class="colnk2" data-b="' + c.ban + '">' + esc(c.name)
+        + '</a><div class="sub">' + c.ban + '</div></td>'
+        + '<td class="n">' + money(c.amt) + '</td>'
+        + pols.map(p => '<td class="n">' + (byp.has(p.id) ? money(byp.get(p.id))
+          : '<span class="sub">—</span>') + '</td>').join('') + '</tr>';
+    }).join('')
+    + '<tr style="background:#EDF1F5;font-weight:600"><td>合計</td>'
+    + '<td class="n">' + money(d.amt) + '</td>'
+    + pols.map(p => '<td class="n">' + money(p.amt) + '</td>').join('') + '</tr>'
+    + '</tbody></table>');
+  $$('#modal .colnk2').forEach(a => a.onclick = e => {
+    e.preventDefault(); closeModal(); gotoMain('comp', a.dataset.b); });
 }
 
 function addrModal(d) {
@@ -167402,6 +167706,49 @@ function crossref(kind, mn, limit) {
           .sort((a, b) => b.amt - a.amt) });
     });
     return out.sort((a, b) => b.np - a.np || b.amt - a.amt).slice(0, limit);
+  }
+
+  if (kind === 'group-donor') {
+    // 先彙總所有捐獻企業，再對這些企業整體做集團判定
+    const per = new Map();
+    B.inc.forEach(r => {
+      if (r[10] < 0) return;
+      let e = per.get(r[10]);
+      if (!e) per.set(r[10], e = { amt: 0, cnt: 0, p: new Map() });
+      e.amt += r[11]; e.cnt++;
+      e.p.set(r[0], (e.p.get(r[0]) || 0) + r[11]);
+    });
+    const bans = Array.from(per.keys()).map(i => TS('ban', i));
+    const gi = groupIndex(bans);
+    const agg = new Map();
+    per.forEach((e, bi) => {
+      const ban = TS('ban', bi);
+      const g = gi.of(ban);
+      if (!g) return;                       // 單打獨鬥的企業不列入
+      let a = agg.get(g.no);
+      if (!a) agg.set(g.no, a = { g, amt: 0, cnt: 0, cos: [], p: new Map() });
+      a.amt += e.amt; a.cnt += e.cnt;
+      a.cos.push({ ban, name: coName(ban), amt: e.amt, cnt: e.cnt,
+                   np: e.p.size,
+                   pols: Array.from(e.p.entries())
+                     .map(([pi, v]) => ({ id: pId(pi), name: pName(pi), amt: v })) });
+      e.p.forEach((v, pi) => a.p.set(pi, (a.p.get(pi) || 0) + v));
+    });
+    const out = [];
+    agg.forEach(a => {
+      if (a.p.size < mn) return;
+      a.cos.sort((x, y) => y.amt - x.amt);
+      out.push({
+        gno: a.g.no, label: a.g.short || ('集團 ' + a.g.no), basis: a.g.basis || '',
+        members: a.g.bans.length, donors: a.cos.length,
+        amt: a.amt, cnt: a.cnt, np: a.p.size, cos: a.cos,
+        name: (a.cos[0] && a.cos[0].name) || a.g.label,
+        pols: Array.from(a.p.entries())
+          .map(([pi, v]) => ({ id: pId(pi), name: pName(pi), amt: v }))
+          .sort((x, y) => y.amt - x.amt)
+      });
+    });
+    return out.sort((x, y) => y.np - x.np || y.amt - x.amt).slice(0, limit);
   }
 
   if (kind === 'multi-salary') {
@@ -167551,7 +167898,7 @@ function initUI() {
   relink('#pctOut', '#vPct', v => (+v / 10).toFixed(1));
   relink('#kMax', '#vK');
   relink('#addrMax', '#vAddrMax');
-  ['#minIn', '#incAnon', '#incOther', '#showSal', '#grpDir', '#grpRep', '#grpAddr', '#grpBldg',
+  ['#minIn', '#incAnon', '#incOther', '#showSal', '#zone', '#zoneSplit', '#grpDir', '#grpRep', '#grpAddr', '#grpBldg',
     '#grpHQ', '#fEl', '#fD1', '#fD2']
     .forEach(id => $(id).addEventListener('change', () => {
       if (S.kind) { recompute(); render(); renderTab2(); }

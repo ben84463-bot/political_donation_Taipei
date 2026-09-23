@@ -454,6 +454,7 @@ kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;paddi
 
 <div class="mask" id="mask"><div class="modal" id="modal"></div></div>
 
+<script>window.__BUILD__={"app": "2.3", "at": "2026-09-23 04:01", "data": "2026-09-17 06:43:16"};</script>
 <script id="payload" type="application/octet-stream">
 H4sIADiMq2oC/7y9eW9rx5Uv+lUE46Eh+TR1PHSSToALeDhuO4lP4m476Q4eLgInMfr63iQO7KRfLi4eQA2UOIiiRkoUqYEaSUmUOGigSIr6AO9jNGsPf+Ur
 vLVq1a6qPZB789j3ok871N61a65Va/yt//Xaf7z2o7f//rU/fPHnz1/70f967fM//enX//HF1998+dUfX/vRa29Nv/na37/2m798+fs///rzP+ODN976fuyN
@@ -164736,13 +164737,23 @@ function normMeta(m) {
 
 let VERSTAMP = '';
 
-/** 版本與資料建置時間，右上角草寫小字 */
+/** 版本標註。程式建置時間由打包工具注入，每次重新產生檔案都會更新；
+    資料建置時間來自資料庫。兩者分開，才不會出現「改了程式但日期沒變」。 */
+let BUILDINFO = null;
 function stampVersion(v) {
-  if (!v) return;
-  VERSTAMP = 'v' + v.app + '　資料 ' + String(v.built || '').slice(0, 10);
+  const bi = (typeof window !== 'undefined' && window.__BUILD__) || null;
+  BUILDINFO = {
+    app: (bi && bi.app) || (v && v.app) || '—',
+    at: (bi && bi.at) || '',
+    data: (bi && bi.data) || (v && v.built) || ''
+  };
+  VERSTAMP = 'v' + BUILDINFO.app + (BUILDINFO.at ? '　' + BUILDINFO.at : '');
   const e = $('#ver');
+  if (!e) return;
   e.textContent = VERSTAMP;
-  e.title = '程式版本 ' + v.app + '／資料建置時間 ' + (v.built || '—');
+  e.title = '程式版本 ' + BUILDINFO.app
+    + '\n程式建置 ' + (BUILDINFO.at || '—')
+    + '\n資料建置 ' + (BUILDINFO.data || '—');
 }
 
 async function boot() {
@@ -166364,7 +166375,8 @@ function exportSVGString(scale) {
     const vt = SVGEL('text', {
       x: x0 + w - 24, y: y0 - titleH + 68, 'text-anchor': 'end',
       'font-size': 11, 'font-style': 'italic', fill: '#9AA7B2',
-      text: VERSTAMP || ''
+      text: (VERSTAMP || '')
+        + (BUILDINFO && BUILDINFO.data ? '　資料 ' + String(BUILDINFO.data).slice(0, 10) : '')
     });
     vt.setAttribute('font-family',
       '"Segoe Script","Bradley Hand","Snell Roundhand",cursive,sans-serif');
@@ -166450,7 +166462,9 @@ async function exportTab5() {
     text: '僅呈現形式上的重複關係，不代表任何不法。製表 '
       + new Date().toLocaleString('zh-TW', { hour12: false }) }));
   const vt = SVGEL('text', { x: x1 - 20, y: y0 - 20, 'text-anchor': 'end',
-    'font-size': 11, 'font-style': 'italic', fill: '#9AA7B2', text: VERSTAMP || '' });
+    'font-size': 11, 'font-style': 'italic', fill: '#9AA7B2',
+    text: (VERSTAMP || '')
+      + (BUILDINFO && BUILDINFO.data ? '　資料 ' + String(BUILDINFO.data).slice(0, 10) : '') });
   vt.setAttribute('font-family', '"Segoe Script","Bradley Hand",cursive,sans-serif');
   out.appendChild(vt);
   const g = SVGEL('g');
@@ -167107,7 +167121,9 @@ function limitsDialog() {
   const v = DB.meta.version || {};
   openModal('<h2>資料範圍與已知限制</h2>'
     + '<p class="hint">本工具只做「資料勾稽與呈現」，任何關聯都必須回到原始公告與登記資料核對後才能採用。<br>'
-    + '程式版本 <b>v' + esc(v.app || '') + '</b>　資料庫建置時間 <b>' + esc(v.built || '—') + '</b></p>'
+    + '程式版本 <b>v' + esc((BUILDINFO && BUILDINFO.app) || '') + '</b>'
+    + '　程式建置 <b>' + esc((BUILDINFO && BUILDINFO.at) || '—') + '</b>'
+    + '　資料建置 <b>' + esc((BUILDINFO && BUILDINFO.data) || '—') + '</b></p>'
     + '<h2 style="font-size:15px;margin-top:16px">一、目前資料量</h2>'
     + '<table class="grid"><tbody>'
     + '<tr><td>政治獻金申報明細</td><td class="n">收入 ' + nf.format(b.don_rows.incomes)

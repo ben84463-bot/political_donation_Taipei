@@ -165702,39 +165702,7 @@ function render() {
   VP.appendChild(gBox); VP.appendChild(gEdge); VP.appendChild(gNode); VP.appendChild(gHead);
 
   // 集團方框
-  groupBoxes().forEach(b => {
-    gBox.appendChild(SVGEL('rect', {
-      x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
-      fill: C.boxfill, stroke: C.group, 'stroke-width': 1.4,
-      'stroke-dasharray': '6 4', 'pointer-events': 'none'
-    }));
-    // 透明的粗邊框當作拖曳把手，抓邊框就能移動整組
-    const handle = SVGEL('rect', {
-      x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
-      fill: 'none', stroke: 'transparent', 'stroke-width': 14,
-      'pointer-events': 'stroke'
-    });
-    handle.style.cursor = 'move';
-    handle.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, handle));
-    handle.addEventListener('mouseenter', e => tipGroup(e, b.g));
-    handle.addEventListener('mousemove', moveTip);
-    handle.addEventListener('mouseleave', hideTip);
-    gBox.appendChild(handle);
-    if (b.first) {
-      const t = SVGEL('text', {
-        x: b.x + 8, y: b.y - 5, 'font-size': 12, fill: C.group,
-        'font-weight': 600, text: b.g.short + '（' + b.g.bans.length + ' 家）'
-          + (b.g.basis ? '　' + b.g.basis : '')
-      });
-      t.style.cursor = 'move';
-      t.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, t));
-      t.addEventListener('click', () => { if (!drag.did) showGroup(b.g); });
-      t.addEventListener('mouseenter', e => tipGroup(e, b.g));
-      t.addEventListener('mousemove', moveTip);
-      t.addEventListener('mouseleave', hideTip);
-      gBox.appendChild(t);
-    }
-  });
+  drawBoxes(gBox);
 
   // 區塊標題
   const heads = [];
@@ -165810,9 +165778,16 @@ function render() {
               : money(n.amt) + ' 元／' + n.cnt + ' 筆'
       }));
     }
-    g.addEventListener('mouseenter', ev => tipNode(ev, n));
+    const grp = n.ban ? S.gmap.get(n.ban) : null;
+    g.addEventListener('mouseenter', ev => {
+      tipNode(ev, n);
+      if (grp) highlightGroup(grp, true);
+    });
     g.addEventListener('mousemove', moveTip);
-    g.addEventListener('mouseleave', hideTip);
+    g.addEventListener('mouseleave', () => {
+      hideTip();
+      if (grp) highlightGroup(grp, false);
+    });
     g.addEventListener('click', ev => { if (!drag.did) showDetail(n); });
     g.addEventListener('dblclick', ev => { ev.preventDefault(); recenter(n); });
     g.addEventListener('pointerdown', ev => startDrag(ev, n, g));
@@ -165886,9 +165861,10 @@ function beginDrag(ev, list, captureEl) {
   const origins = list.map(n => ({ n, ox: n.x, oy: n.y }));
   drag.on = { origins, sx: ev.clientX, sy: ev.clientY };
   drag.did = false;
-  try { captureEl.setPointerCapture(ev.pointerId); } catch (e) {}
   const moved = new Set(list);
   const centerMoved = list.some(n => n.role === 'center');
+  const grp = list.length > 1 && list[0].ban ? S.gmap.get(list[0].ban) : null;
+  if (grp) highlightGroup(grp, true);
   const mv = e => {
     const d = drag.on;
     if (!d) return;
@@ -165911,13 +165887,17 @@ function beginDrag(ev, list, captureEl) {
       drag.on.origins.forEach(o => G.pos.set(o.n.key, { x: o.n.x, y: o.n.y }));
       redrawBoxes();
     }
+    if (grp) highlightGroup(grp, false);
     drag.on = null;
-    captureEl.removeEventListener('pointermove', mv);
-    captureEl.removeEventListener('pointerup', up);
+    window.removeEventListener('pointermove', mv, true);
+    window.removeEventListener('pointerup', up, true);
+    window.removeEventListener('pointercancel', up, true);
     setTimeout(() => { drag.did = false; }, 30);
   };
-  captureEl.addEventListener('pointermove', mv);
-  captureEl.addEventListener('pointerup', up);
+  // 監聽掛在 window：拖曳過程中方框會重繪，掛在元素上會被一起移除而中斷拖曳
+  window.addEventListener('pointermove', mv, true);
+  window.addEventListener('pointerup', up, true);
+  window.addEventListener('pointercancel', up, true);
 }
 
 function startDrag(ev, n, g) {
@@ -165938,35 +165918,82 @@ function setDragMode(m) {
   const a = $('#dragOne'), b = $('#dragGrp');
   if (a) a.classList.toggle('on', m === 'one');
   if (b) b.classList.toggle('on', m === 'group');
+  const inf = $('#netInfo');
+  if (inf && S.kind) {
+    inf.textContent = m === 'group'
+      ? '拖曳整組：拖任一集團成員會帶動同集團全部節點（未成組的節點仍單獨移動）'
+      : '拖曳單一：只移動被拖的節點；按住 Shift 或抓集團方框邊框可整組移動';
+    setTimeout(() => { if (S.kind) render(); }, 2200);
+  }
 }
 
-function redrawBoxes() {
-  if (!VP) return;
-  const gBox = VP.firstChild;
+let BOXELS = [];
+
+/** 建立集團方框（虛線框＋透明拖曳把手＋標題）*/
+function drawBoxes(gBox) {
   gBox.innerHTML = '';
+  BOXELS = [];
   groupBoxes().forEach(b => {
-    gBox.appendChild(SVGEL('rect', {
+    const rect = SVGEL('rect', {
       x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
       fill: C.boxfill, stroke: C.group, 'stroke-width': 1.4,
       'stroke-dasharray': '6 4', 'pointer-events': 'none'
-    }));
+    });
+    gBox.appendChild(rect);
     const handle = SVGEL('rect', {
       x: b.x, y: b.y, width: b.w, height: b.h, rx: 8,
-      fill: 'none', stroke: 'transparent', 'stroke-width': 14, 'pointer-events': 'stroke'
+      fill: 'none', stroke: 'transparent', 'stroke-width': 16, 'pointer-events': 'stroke'
     });
     handle.style.cursor = 'move';
     handle.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, handle));
+    handle.addEventListener('mouseenter', e => tipGroup(e, b.g));
+    handle.addEventListener('mousemove', moveTip);
+    handle.addEventListener('mouseleave', hideTip);
     gBox.appendChild(handle);
+    let label = null;
     if (b.first) {
-      const t = SVGEL('text', {
+      label = SVGEL('text', {
         x: b.x + 8, y: b.y - 5, 'font-size': 12, fill: C.group, 'font-weight': 600,
         text: b.g.short + '（' + b.g.bans.length + ' 家）'
           + (b.g.basis ? '　' + b.g.basis : '')
       });
-      t.style.cursor = 'move';
-      t.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, t));
-      t.addEventListener('click', () => { if (!drag.did) showGroup(b.g); });
-      gBox.appendChild(t);
+      label.style.cursor = 'move';
+      label.addEventListener('pointerdown', ev => startGroupDrag(ev, b.g, label));
+      label.addEventListener('click', () => { if (!drag.did) showGroup(b.g); });
+      label.addEventListener('mouseenter', e => tipGroup(e, b.g));
+      label.addEventListener('mousemove', moveTip);
+      label.addEventListener('mouseleave', hideTip);
+      gBox.appendChild(label);
+    }
+    BOXELS.push({ rect, handle, label, g: b.g });
+  });
+}
+
+/** 滑到集團成員時，把該集團的方框加粗，讓使用者確認整組範圍 */
+function highlightGroup(g, on) {
+  BOXELS.forEach(e => {
+    if (e.g !== g) return;
+    e.rect.setAttribute('stroke-width', on ? 3 : 1.4);
+    e.rect.setAttribute('fill', on ? '#FBF0D8' : C.boxfill);
+    if (e.label) e.label.setAttribute('font-size', on ? 13 : 12);
+  });
+}
+
+/** 拖曳時只更新座標，不重建元素（重建會把正在拖的把手一起移除）*/
+function redrawBoxes() {
+  if (!VP) return;
+  const gBox = VP.firstChild;
+  const boxes = groupBoxes();
+  if (boxes.length !== BOXELS.length) { drawBoxes(gBox); return; }
+  boxes.forEach((b, i) => {
+    const e = BOXELS[i];
+    [e.rect, e.handle].forEach(el => {
+      el.setAttribute('x', b.x); el.setAttribute('y', b.y);
+      el.setAttribute('width', b.w); el.setAttribute('height', b.h);
+    });
+    if (e.label) {
+      e.label.setAttribute('x', b.x + 8);
+      e.label.setAttribute('y', b.y - 5);
     }
   });
 }

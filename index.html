@@ -227,7 +227,7 @@ tr.xlink{cursor:pointer}
   </span>
   <div class="srch">
     <input id="q" type="text" autocomplete="off" spellcheck="false"
-           placeholder="政治人物、企業名稱／統編、或一般民眾姓名">
+           placeholder="政治人物、企業名稱／統編、股票名稱／代號、或一般民眾姓名">
     <span class="sk">↵</span>
     <div class="sugg" id="sugg"></div>
   </div>
@@ -501,6 +501,9 @@ tr.xlink{cursor:pointer}
       <div class="panehd">
         <h2>議員股票與議會資料</h2>
         <select id="x6who"></select>
+        <label style="font-size:12px;color:var(--ink2)">股票 <input id="x6stk" list="x6stkList" placeholder="名稱或代號，例：台積電、2330" style="width:170px;padding:4px 6px;border:1px solid var(--rule)"></label>
+        <datalist id="x6stkList"></datalist>
+        <button class="btn" id="x6stkClr" title="清除股票篩選">✕</button>
         <label style="font-size:12px;color:var(--ink2)">時間窗 ±<input type="number" id="x6win" min="1" max="730" style="width:60px;padding:4px 6px;border:1px solid var(--rule)"> 天</label>
         <label style="font-size:12px;color:var(--ink2)">短線 ≤<input type="number" id="x6short" min="1" max="365" style="width:52px;padding:4px 6px;border:1px solid var(--rule)"> 天</label>
         <button class="btn" id="x6live" title="連到證交所、櫃買中心開放資料更新公司統編與收盤價">更新公司資料與股價（連網）</button>
@@ -516,6 +519,7 @@ tr.xlink{cursor:pointer}
       <div class="sum" id="x6sum"></div>
       <div id="x6subs">
         <button data-s="flags" class="on">⚠ 需查核</button>
+        <button data-s="stk">依股票查詢</button>
         <button data-s="pos">持股與損益</button>
         <button data-s="tr">交易明細</button>
         <button data-s="int">質詢關聯</button>
@@ -531,7 +535,7 @@ tr.xlink{cursor:pointer}
 <div id="tip"></div>
 <div class="mask" id="mask"><div class="modal" id="modal"></div></div>
 
-<script>window.__BUILD__={"app": "3.3", "at": "2026-11-17", "data": "2026-10-16 10:25:38（獻金）／2026-11-17（議員股票與議會）"};</script>
+<script>window.__BUILD__={"app": "3.4", "at": "2026-11-17", "data": "2026-10-16 10:25:38（獻金）／2026-11-17（議員股票與議會）"};</script>
 <script id="payload" type="application/octet-stream">
 H4sIADqL0WoC/7y9eW9rx5Uv+lUE46EhnRPqeIg7A/AAH/u47SQ+ibvtpDt4uDCcxOj2vYlt2E6/XFw8gBoocZKokRJFaqBGUhIlDhookaI+wP0YzdrDX/kK
 b61atatqD+LelM976NMOtXftmmvVGn/rf732n6/9/K0fvfaXL77//LWf/6/XPv/mm8/+84tvv/vy669e+/lrb42//tqPXvvDX7/88/efff49PHjz9Tf/MfbG
@@ -186042,7 +186046,7 @@ function xPath(a, b) {
 const _layout = layout;
 layout = function () {
   _layout();
-  G.xedges = [];
+  G.xedges = []; G.xinfo = null;
   if (!xActive()) return;
   const CA = getCA(S.pol.name), R = getRel(CA);
   if (!CA) return;
@@ -186521,8 +186525,9 @@ function x6Render(sub) {
   const who = x6Who();
   const body = $('#x6body'), sum = $('#x6sum');
   if (!who) { sum.innerHTML = ''; body.innerHTML = '<div class="hint" style="padding:16px">請選擇一位議員；在分頁①查詢現任議員時會自動帶入。</div>'; return; }
-  const CA = getCA(who);
-  const R = (S.kind === 'pol' && S.pol && S.pol.name === who) ? getRel(CA) : null;
+  const CA0 = getCA(who);
+  const R0 = (S.kind === 'pol' && S.pol && S.pol.name === who) ? getRel(CA0) : null;
+  const CA = x6View(CA0), R = x6RelView(R0);
   const F = getFlags(CA, R);
   const inPol = B.pol.some(p => p[1] === who);
   sum.innerHTML = '<b>' + esc(who) + '</b>　交易 ' + nf.format(CA.tr.length) + ' 筆／' + CA.stocks.size + ' 檔'
@@ -186611,7 +186616,7 @@ function x6Gap(st) {
 }
 function x6CSV() {
   const who = x6Who(); if (!who) return;
-  const CA = getCA(who), R = (S.kind === 'pol' && S.pol && S.pol.name === who) ? getRel(CA) : null;
+  const CA0 = getCA(who), CA = x6View(CA0), R = x6RelView((S.kind === 'pol' && S.pol && S.pol.name === who) ? getRel(CA0) : null);
   const k = $('#x6csvKind').value;
   let rows;
   if (k === 'pos') {
@@ -186857,7 +186862,7 @@ getFlags = function (CA, R) {
 
 async function xgQuery() {
   const who = x6Who(); if (!who) return alert('請先選擇議員。');
-  const CA = getCA(who), rows = xgData(CA);
+  const CA = x6View(getCA(who)), rows = xgData(CA);
   const bans = new Set();
   rows.forEach(r => {
     if (r.g.ban) bans.add(r.g.ban);
@@ -187124,13 +187129,13 @@ x6Render = function (sub) {
   if (X6.sub !== 'grp') return _x6Render(sub);
   _x6Render('grp');                         // 先畫摘要與子頁按鈕（grp 在原函式內不產生內容）
   const who = x6Who(); if (!who) return;
-  xgRender(getCA(who));
+  xgRender(x6View(getCA(who)));
 };
 const _x6CSV = x6CSV;
 x6CSV = function () {
   if ($('#x6csvKind').value !== 'grp') return _x6CSV();
   const who = x6Who(); if (!who) return;
-  const CA = getCA(who);
+  const CA = x6View(getCA(who));
   const rows = [['議員', '持股公司', '持股公司統編', '集團企業', '集團企業統編', '關聯依據', '臺北市相關得標件數', '臺北市相關得標金額',
     '全部得標件數', '全部得標金額', '最近決標日', '臺北市得標距買賣最近天數']];
   const st2 = st => st && st.q ? [st.tpN, st.tpAmt, st.n, st.amt, roc8(st.last), st.near ? st.near.dd : ''] : ['未查詢', '', '', '', '', ''];
@@ -187180,6 +187185,347 @@ function xFixFreq() {
   if (siblingsOf._n2b) siblingsOf._n2b = null;
   return n;
 }
+
+
+/* ═══════════════════════════ 14. 股票查詢、持股議員圖層、家屬兼任董監事（v3.4 新增）═══════════════════════════ */
+
+/* ── 股票索引（跨議員）── */
+let _XSTK = null, _XSTKKey = '';
+function xStockIndex() {
+  const key = XS.liveAt || '';
+  if (_XSTK && _XSTKKey === key) return _XSTK;
+  const m = new Map();
+  Object.entries(X.stk).forEach(([c, st]) => st.pos.forEach(p => {
+    const o = refOf(p.ref, p.s) || {};
+    let e = m.get(p.s);
+    if (!e) m.set(p.s, e = { s: p.s, raw: new Set(), o, ban: o.ban || '', code: o.code || '', full: o.full || '', ind: o.ind || '',
+      holders: new Map(), n: 0, amt: 0, real: 0 });
+    p.raw.forEach(r => e.raw.add(r));
+    const real = p.cl.reduce((s, l) => s + (l[5] === 'B' ? l[2] * (l[4] - l[3]) : 0), 0);
+    const openSh = p.op.reduce((s, l) => s + l[1], 0), openCost = p.op.reduce((s, l) => s + l[1] * l[2], 0);
+    const h = e.holders.get(c) || { c, owners: new Set(), n: 0, ba: 0, sa: 0, real: 0, openSh: 0, openCost: 0, first: '', last: '', nShort: 0, ini: 0 };
+    h.owners.add(p.rel + '：' + p.o); h.n += p.tr.length; h.ba += p.ba; h.sa += p.sa; h.real += real;
+    h.openSh += openSh; h.openCost += openCost; h.ini += p.ini.length;
+    h.nShort += p.cl.filter(l => l[5] === 'B' && dDays(l[0], l[1]) <= XCFG.shortD).length;
+    p.tr.forEach(i => { const d = st.tr[i][0]; if (!h.first || d < h.first) h.first = d; if (d > h.last) h.last = d; });
+    e.holders.set(c, h);
+    e.n += p.tr.length; e.amt += p.ba + p.sa; e.real += real;
+  }));
+  m.forEach(e => e.holders.forEach(h => {
+    h.unreal = h.openSh > 0 && e.o.close != null ? h.openSh * e.o.close - h.openCost : null;
+  }));
+  _XSTK = m; _XSTKKey = key;
+  return m;
+}
+function xHoldersOfBan(ban, name) {
+  const out = [];
+  xStockIndex().forEach(e => { if ((ban && e.ban === ban) || (name && e.s === name)) e.holders.forEach(h => out.push(Object.assign({ e }, h))); });
+  return out;
+}
+
+/* ── 上方搜尋：加入股票 ── */
+const _search = search;
+search = function (q) {
+  const out = _search(q);
+  q = (q || '').trim();
+  if (!X || !q) return out;
+  const st = [];
+  xStockIndex().forEach(e => {
+    if (e.s.includes(q) || e.code === q || (e.full && e.full.includes(q)) || Array.from(e.raw).some(r => r.includes(q))) st.push(e);
+  });
+  st.sort((a, b) => (b.s === q) - (a.s === q) || b.holders.size - a.holders.size || b.amt - a.amt);
+  const items = st.slice(0, 15).map(e => ({ kind: 'stock', key: e.s, label: e.s + (e.code ? '（' + e.code + '）' : '') + (e.full ? '　' + e.full : ''),
+    note: '持股議員 ' + e.holders.size + ' 位：' + Array.from(e.holders.keys()).slice(0, 5).join('、') + (e.holders.size > 5 ? '…' : '')
+      + (e.ban ? '' : '　（未對上統編，將開啟分頁⑥）'), type: '股票' }));
+  return items.concat(out).slice(0, 80);
+};
+
+/* ── 選取股票：以公司為中心顯示關聯圖，並加入持股議員；對不上統編時改開分頁⑥ ── */
+const _selectTarget2 = selectTarget;
+selectTarget = async function (kind, key, quiet) {
+  if (kind === 'stock') {
+    const e = xStockIndex().get(key);
+    if (e && e.ban && (B.co[e.ban] || DB.dirG.comp[e.ban] || B.T.ban.indexOf(e.ban) >= 0)) {
+      XS.stockFocus = { s: key, ban: e.ban };
+      const r = await _selectTarget2('comp', e.ban, quiet);
+      $('#q').value = key + (e.full ? '（' + e.full + '）' : '');
+      return r;
+    }
+    switchTab('p6'); x6SetStock(key); return;
+  }
+  if (kind !== 'comp') XS.stockFocus = null;
+  else if (XS.stockFocus && XS.stockFocus.ban !== key) XS.stockFocus = null;
+  return _selectTarget2(kind, key, quiet);
+};
+
+/* ── 企業視角加上「持股議員」圖層 ── */
+const _layout2 = layout;
+layout = function () {
+  _layout2();
+  G.xhold = null;
+  if (!X || S.kind !== 'comp') return;
+  const sf = XS.stockFocus && XS.stockFocus.ban === S.key ? XS.stockFocus.s : '';
+  const hs = xHoldersOfBan(S.key, sf);
+  if (!hs.length) return;
+  G.xedges = G.xedges || [];
+  const ys = G.nodes.filter(n => n.role !== 'center').map(n => n.y);
+  const top = (ys.length ? Math.min(...ys) : 0) - 150;
+  const mx = Math.max(1, ...hs.map(h => h.ba + h.sa));
+  const nodes = hs.sort((a, b) => (b.ba + b.sa) - (a.ba + a.sa)).map((h, i, arr) => {
+    const per = 8, row = Math.floor(i / per), cnt = Math.min(per, arr.length - row * per), col = i % per;
+    const n = { key: 'XH:' + h.c + '|' + h.e.s, xkind: 'hold', band: true, role: 'leaf', h, name: h.c, amt: h.ba + h.sa, cnt: h.n,
+      r: clamp(6 + 8 * Math.sqrt((h.ba + h.sa) / mx), 6, 14), w: clamp(1.2 + 5 * Math.sqrt((h.ba + h.sa) / mx), 1.2, 6),
+      side: 'x', dir: 0, x: (col - (cnt - 1) / 2) * 140, y: top - row * 92, flags: h.nShort ? [1] : [] };
+    const sv = G.pos.get(n.key); if (sv) { n.x = sv.x; n.y = sv.y; }
+    return n;
+  });
+  nodes.forEach(n => { G.nodes.push(n); G.edges.push({ node: n, w: n.w, x: true }); });
+  // 持股議員同時是該公司捐獻／支出往來的申報人
+  nodes.forEach(n => {
+    const pn = G.nodes.find(m => m.dtype === 'politician' && m.name === n.h.c);
+    if (pn) G.xedges.push({ a: n, b: pn, kind: 'hold-pol', hot: true,
+      txt: n.h.c + ' 持有／買賣 ' + n.h.e.s + '，同時與該公司有政治獻金往來（' + (pn.flow || '') + ' ' + money(pn.amt) + ' 元）' });
+  });
+  G.xhold = { hold: nodes.length, x: G.xedges.length };
+};
+XEDGE['hold-pol'] = XC.flag; XEDGE_LBL['hold-pol'] = '持股議員 ↔ 獻金往來';
+const _nodeColor2 = nodeColor;
+nodeColor = function (n) { return n.xkind === 'hold' ? XC.stk : _nodeColor2(n); };
+const _render2 = render;
+render = function () {
+  _render2();
+  if (!X || S.kind !== 'comp' || !VP) return;
+  G.nodes.filter(n => n.xkind === 'hold').forEach(n => {
+    const tx = n.el && n.el.querySelectorAll('text');
+    if (tx && tx[1]) {
+      const h = n.h, v = h.real || (h.unreal || 0);
+      tx[1].textContent = (h.real ? '已實現 ' + signMoney(h.real) : '') + (h.openSh > 0 ? (h.real ? '・' : '') + '持有 ' + nf.format(Math.round(h.openSh)) + ' 股' : '') || '損益 0';
+      tx[1].setAttribute('fill', v > 0 ? XC.gain : v < 0 ? XC.loss : C.ink3);
+    }
+  });
+  if (G.xhold && G.xhold.hold) {
+    const inf = $('#netInfo');
+    if (!/持股議員/.test(inf.textContent)) inf.textContent += '　·　持股議員 ' + G.xhold.hold + (G.xhold.x ? '　·　持股議員同時有獻金往來 ' + G.xhold.x : '');
+  }
+};
+const _xSections = xSections;
+xSections = function () {
+  const s = _xSections();
+  const hold = G.nodes.filter(n => n.xkind === 'hold');
+  if (hold.length) s.push({ t: '持股議員（變動財產申報）', m: hold, side: 0, dy: 30 });
+  return s;
+};
+const _tipNode2 = tipNode;
+tipNode = function (ev, n) {
+  if (n.xkind !== 'hold') return _tipNode2(ev, n);
+  const h = n.h;
+  showTip(ev, '<h3>' + esc(h.c) + '　<span style="font-weight:400">持有 ' + esc(h.e.s) + '</span></h3><table>'
+    + '<tr><td>所有人</td><td>' + esc(Array.from(h.owners).join('、')) + '</td></tr>'
+    + '<tr><td>交易筆數</td><td class="n">' + h.n + '</td></tr>'
+    + '<tr><td>買進／賣出</td><td class="n">' + money(h.ba) + '／' + money(h.sa) + '</td></tr>'
+    + '<tr><td>已實現</td><td class="n ' + pnlCls(h.real) + '">' + signMoney(h.real) + '</td></tr>'
+    + (h.openSh > 0 ? '<tr><td>期末持有</td><td class="n">' + nf.format(h.openSh) + ' 股</td></tr><tr><td>未實現</td><td class="n ' + pnlCls(h.unreal) + '">'
+      + (h.unreal == null ? '無股價' : signMoney(h.unreal)) + '</td></tr>' : '')
+    + '<tr><td>首末交易</td><td class="n">' + roc8(h.first) + '〜' + roc8(h.last) + '</td></tr></table>'
+    + '<div class="mo">單擊看 FIFO 配對；雙擊切換到這位議員</div>');
+};
+const _showDetail2 = showDetail;
+showDetail = function (n) {
+  if (n.xkind !== 'hold') return _showDetail2(n);
+  $('#detail').innerHTML = '<div class="hint">議員 <b>' + esc(n.h.c) + '</b> 的持股明細</div>' + xStockHTML(getCA(n.h.c), n.h.e.s);
+  applySort('#detail');
+};
+const _recenter2 = recenter;
+recenter = function (n) {
+  if (n && n.xkind === 'hold') {
+    hideTip();
+    const p = B.pol.find(x => x[1] === n.h.c);
+    if (p) return selectTarget('pol', p[0]);
+    switchTab('p6'); $('#x6who').value = n.h.c; x6SetStock(n.h.e.s); return;
+  }
+  return _recenter2(n);
+};
+
+/* ── 分頁⑥：以股票名稱查詢／篩選 ── */
+X6.stkq = '';
+function x6SetStock(q) {
+  X6.stkq = (q || '').trim();
+  if ($('#x6stk')) $('#x6stk').value = X6.stkq;
+  x6Render(X6.stkq && !x6Who() ? 'stk' : X6.sub);
+}
+function x6Match(s) {
+  const q = X6.stkq; if (!q) return true;
+  if (!s) return false;
+  if (s.includes(q)) return true;
+  const e = xStockIndex().get(s);
+  return !!e && (e.code === q || (e.full && e.full.includes(q)) || Array.from(e.raw).some(r => r.includes(q)));
+}
+function x6View(CA) {
+  if (!CA || !X6.stkq) return CA;
+  const stocks = new Map(Array.from(CA.stocks.entries()).filter(([s]) => x6Match(s)));
+  const positions = CA.positions.filter(p => x6Match(p.s));
+  const keep = new Set(positions.flatMap(p => p.trs.map(t => t.i)));
+  return Object.assign({}, CA, {
+    stocks, positions, tr: CA.tr.filter(t => keep.has(t.i)),
+    sInt: CA.sInt.filter(x => x6Match(x.g.s)), sTnd: CA.sTnd.filter(x => x6Match(x.g.s)),
+    real: positions.reduce((s, p) => s + p.real, 0), unreal: positions.reduce((s, p) => s + (p.unreal || 0), 0),
+    unrealMissing: positions.filter(p => p.openSh > 0 && p.unreal == null).length,
+    iniSells: positions.reduce((s, p) => s + p.ini.length, 0), filtered: true
+  });
+}
+function x6RelView(R) {
+  if (!R || !X6.stkq) return R;
+  return { donInt: [], spdInt: [], donStk: R.donStk.filter(x => x6Match(x.g.s)) };
+}
+const _x6Render2 = x6Render;
+x6Render = function (sub) {
+  if (sub) X6.sub = sub;
+  if (X6.sub === 'stk') {
+    $$('#x6subs button').forEach(b => b.classList.toggle('on', b.dataset.s === 'stk'));
+    return xStkRender();
+  }
+  _x6Render2(sub);
+  if (X6.stkq && x6Who()) {
+    $('#x6sum').insertAdjacentHTML('beforeend', '<br><span class="pill q">股票篩選：' + esc(X6.stkq)
+      + '</span> <span class="sub">只顯示名稱、代號或公司全名含「' + esc(X6.stkq) + '」的股票；質詢關聯只列與該股有關者。</span>');
+  }
+};
+function xStkRender() {
+  const sum = $('#x6sum'), body = $('#x6body');
+  const idx = xStockIndex(), q = X6.stkq;
+  if (!q) {
+    sum.innerHTML = '<b>依股票查詢</b>　在上方「股票」欄輸入名稱或代號；下表為所有議員買賣過的股票（共 ' + idx.size + ' 檔），點任一列即可查詢。';
+    const arr = Array.from(idx.values());
+    body.innerHTML = '<table class="grid"><thead><tr><th>股票</th><th>代號</th><th>產業</th><th class="n">持股議員數</th><th>持股議員</th>'
+      + '<th class="n">交易筆數</th><th class="n">買賣金額合計</th><th class="n">已實現合計</th></tr></thead><tbody>'
+      + arr.map(e => '<tr class="xlink" data-s="' + esc(e.s) + '"><td>' + esc(e.s) + '</td><td>' + esc(e.code) + '</td><td>' + esc(e.ind) + '</td>'
+        + tdV(e.holders.size, String(e.holders.size)) + '<td class="sub">' + esc(Array.from(e.holders.keys()).join('、')) + '</td>'
+        + tdV(e.n, nf.format(e.n)) + tdV(e.amt, money(e.amt)) + tdV(e.real, signMoney(e.real), pnlCls(e.real)) + '</tr>').join('') + '</tbody></table>';
+    applySort('#x6body');
+    $$('#x6body tr.xlink').forEach(tr => tr.onclick = () => x6SetStock(tr.dataset.s));
+    return;
+  }
+  const hits = Array.from(idx.values()).filter(e => x6Match(e.s));
+  const rows = hits.flatMap(e => Array.from(e.holders.values()).map(h => ({ e, h })));
+  sum.innerHTML = '<b>股票「' + esc(q) + '」</b>　符合 ' + hits.length + ' 檔：' + hits.map(e => esc(e.s) + (e.code ? '（' + e.code + '）' : '')).join('、')
+    + '　持股議員 ' + new Set(rows.map(r => r.h.c)).size + ' 位'
+    + (hits.some(e => e.ban) ? '　<button class="btn" id="xStkGraph">在關聯圖以這家公司為中心</button>' : '');
+  body.innerHTML = rows.length ? '<table class="grid"><thead><tr><th>股票</th><th>議員</th><th>所有人</th><th class="n">交易筆數</th><th class="n">買進金額</th>'
+    + '<th class="n">賣出金額</th><th class="n">已實現</th><th class="n">期末持股</th><th class="n">未實現</th><th>首次交易</th><th>末次交易</th>'
+    + '<th class="n">短線次數</th><th class="n">期初持股賣出</th></tr></thead><tbody>'
+    + rows.map(({ e, h }) => '<tr class="xlink" data-c="' + esc(h.c) + '" data-s="' + esc(e.s) + '"><td>' + esc(e.s) + '<div class="sub">' + esc(e.code) + '</div></td><td><b>'
+      + esc(h.c) + '</b></td><td class="sub">' + esc(Array.from(h.owners).join('、')) + '</td>' + tdV(h.n, String(h.n)) + tdV(h.ba, money(h.ba)) + tdV(h.sa, money(h.sa))
+      + tdV(h.real, signMoney(h.real), pnlCls(h.real)) + tdV(h.openSh, h.openSh ? nf.format(h.openSh) : '')
+      + tdV(h.unreal, h.openSh ? (h.unreal == null ? '無股價' : signMoney(h.unreal)) : '', pnlCls(h.unreal))
+      + '<td data-v="' + h.first + '">' + roc8(h.first) + '</td><td data-v="' + h.last + '">' + roc8(h.last) + '</td>'
+      + tdV(h.nShort, h.nShort ? String(h.nShort) : '') + tdV(h.ini, h.ini ? String(h.ini) : '') + '</tr>').join('') + '</tbody></table>'
+    + '<div class="hint" style="padding:10px">點任一列看該議員這檔股票的 FIFO 配對、交易、相關質詢與得標；要看其他子頁（需查核、質詢關聯、持股集團企業），'
+    + '在上方選擇議員後切換子頁，篩選條件會保留。</div>'
+    : '<div class="hint" style="padding:16px">沒有議員的變動申報中出現名稱、代號或公司全名含「' + esc(q) + '」的股票。</div>';
+  applySort('#x6body');
+  $$('#x6body tr.xlink').forEach(tr => tr.onclick = () => {
+    $('#x6who').value = tr.dataset.c;
+    openModal('<div class="hint">議員 <b>' + esc(tr.dataset.c) + '</b></div>' + xStockHTML(getCA(tr.dataset.c), tr.dataset.s)); applySort('#modal');
+  });
+  const gb = $('#xStkGraph');
+  if (gb) gb.onclick = () => { const e = hits.find(x => x.ban); switchTab('p1'); selectTarget('stock', e.s); };
+}
+const _x6Init = x6Init;
+x6Init = function () {
+  _x6Init();
+  const dl = $('#x6stkList');
+  if (dl) dl.innerHTML = Array.from(xStockIndex().values()).sort((a, b) => b.holders.size - a.holders.size || b.amt - a.amt)
+    .map(e => '<option value="' + esc(e.s) + '">' + esc((e.code ? e.code + ' ' : '') + (e.full || '') + '　持股議員 ' + e.holders.size + ' 位') + '</option>').join('');
+  const inp = $('#x6stk');
+  if (inp) {
+    inp.addEventListener('change', () => x6SetStock(inp.value));
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') x6SetStock(inp.value); });
+  }
+  const clr = $('#x6stkClr');
+  if (clr) clr.onclick = () => x6SetStock('');
+  const sel = $('#x6who');
+  sel.onchange = () => { x6Render(X6.sub === 'stk' ? 'pos' : X6.sub); };
+};
+
+/* ── 分頁②：加入變動申報的配偶、子女與股票所有人 ── */
+function xFamily(name) {
+  const st = X && X.stk[name]; if (!st) return [];
+  const m = new Map();
+  const add = (rel, nm) => {
+    nm = String(nm || '').replace(/[（(].*?[）)]/g, '').trim();
+    rel = String(rel || '').replace('未成年', '');
+    if (!nm || nm === '本欄空白' || nm === name || nm.length > 6) return;
+    if (!m.has(nm)) m.set(nm, new Set());
+    m.get(nm).add(rel);
+  };
+  st.fam.forEach(([rel, s]) => {
+    const parts = String(s).split(/(未成年子女|成年子女|子女|配偶)/);
+    add(rel, parts[0]);
+    for (let i = 1; i < parts.length - 1; i += 2) add(parts[i], parts[i + 1]);
+  });
+  st.pos.forEach(p => { if (p.o !== name) add(p.rel === '家屬' ? '股票所有人' : p.rel, p.o); });
+  return Array.from(m.entries()).map(([nm, rels]) => ({ name: nm, rel: Array.from(rels).join('／'), masked: nm.includes('○') }));
+}
+const _salaryJoin = salaryJoin;
+salaryJoin = function () {
+  const out = _salaryJoin();
+  XS.famInfo = null;
+  if (!(X && S.kind === 'pol' && S.pol && isCouncilor(S.pol.name))) return out;
+  const fam = xFamily(S.pol.name), byName = new Map(out.map(d => [d.p.name, d]));
+  const add = [], both = [];
+  fam.forEach(f => {
+    if (byName.has(f.name)) { both.push(f); return; }
+    const bans = f.masked ? [] : nameToBans(f.name);
+    const cos = bans.map(b => {
+      const c = DB.dirG.comp[b] || { n: '', d: [] }, a = addrOf(b);
+      return { ban: b, name: coName(b, c.n), posts: (c.d || []).filter(x => x[1] === f.name).map(x => x[0]), addr: a ? a.full : '', org: a ? a.org : '' };
+    });
+    add.push({ p: { name: f.name, amt: 0, cnt: 0, first: null, last: null, fam: true, masked: f.masked, famRel: f.rel,
+      id: '變動財產申報：' + f.rel + (f.masked ? '（申報書已遮蔽姓名，無法比對董監事）' : ''), src: '變動財產申報（' + f.rel + '）' },
+      freq: NF_ALL[f.name] || 0, cos });
+  });
+  XS.famInfo = { n: fam.length, add: add.length, hit: add.filter(d => d.cos.length).length, masked: fam.filter(f => f.masked).length, both };
+  return add.concat(out);
+};
+const _renderTab2 = renderTab2;
+renderTab2 = function () {
+  _renderTab2();
+  const fi = XS.famInfo;
+  if (!fi || S.kind !== 'pol') return;
+  const sum = $('#p2sum'), first = sum.firstElementChild;
+  if (first && first.querySelector('b')) first.querySelector('b').textContent = nf.format((S.salaryAll || []).length);
+  sum.insertAdjacentHTML('beforeend', card(nf.format(fi.n), '變動申報之配偶／子女／股票所有人（人）')
+    + card(nf.format(fi.hit), '其中有董監事登記者')
+    + (fi.masked ? card(nf.format(fi.masked), '姓名遮蔽無法比對（人）') : '')
+    + (fi.both.length ? card(esc(fi.both.map(f => f.name + '（' + f.rel + '）').join('、')), '同時是薪資／勞務報酬對象') : ''));
+  $$('#p2body > table.grid > tbody > tr').forEach(tr => {
+    const td = tr.cells[1]; if (!td) return;
+    const nm = (td.querySelector('b') || {}).textContent;
+    if (!nm) return;
+    const f = (XS.famInfo.both || []).find(x => x.name === nm);
+    if (f) td.insertAdjacentHTML('beforeend', '<div><span class="pill q">也是' + esc(f.rel) + '（變動財產申報）</span></div>');
+    if (td.textContent.includes('變動財產申報：')) tr.style.background = '#F4FAF9';
+  });
+};
+tab2CSV = function () {
+  const cap = +$('#addrMax').value;
+  const rows = [['對象', '來源', '身分證(遮罩)／說明', '累計金額', '筆數', '期間起', '期間迄',
+    '全國同名董監事家數', '本檔收錄家數', '收錄狀況', '兼任企業名稱', '統一編號', '職稱',
+    '組織別', '營業地址', '總機構統編', '同址家數', '同址企業', '同棟家數', '同棟企業', '集合登記地址']];
+  salaryJoin().forEach(d => {
+    const cv = nameCov(d.p.name);
+    const CVT = { full: '完整', partial: '收錄不全', unknown: '無法確認', none: '查無登記' }[cv.state];
+    const src = d.p.src || '獻金支出明細';
+    const base = [d.p.name, src, d.p.id || '', d.p.amt, d.p.cnt, d.p.first || '', d.p.last || '', cv.nat == null ? '' : cv.nat, cv.have, d.p.masked ? '姓名遮蔽' : CVT];
+    if (!d.cos.length) { rows.push(base.concat(['', '', '', '', '', '', '', '', '', '', ''])); return; }
+    d.cos.forEach(c => {
+      const sa = sameAddrOf(c.ban, cap) || {};
+      rows.push(base.concat([c.name, c.ban, c.posts.join('、'), c.org || '', c.addr || '', sa.hq || '', sa.nF || '',
+        (sa.same || []).map(b => coName(b)).join('、'), sa.nB || '', (sa.bldg || []).map(b => coName(b)).join('、'), sa.crowdedF ? '是' : '']));
+    });
+  });
+  dl('薪資對象兼任董監事_' + S.pol.name + '.csv', new Blob([toCSV(rows)], { type: 'text/csv' }));
+};
 
 initUI();
 boot();

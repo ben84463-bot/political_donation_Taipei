@@ -378,7 +378,7 @@ tr.xlink{cursor:pointer}
         <div class="hint" style="margin-top:6px">
           <b>雙擊</b>任一節點可改以該企業／人物為中心重新查詢。單擊看明細。<br>
           拖曳可排版：預設移動單一節點，按住 <kbd>Shift</kbd> 拖曳或切換成「拖曳整組」可整個集團一起移動，
-          也可以直接抓集團方框的邊框或標題來拖。<kbd>滾輪</kbd>縮放、拖背景平移、<kbd>R</kbd>重置。</div>
+          也可以直接抓集團方框的邊框或標題來拖。拖曳<b>區塊標題</b>（例如「捐獻來源」「持股公司」「相關質詢」）可整區移動，標題會跟著節點走。<kbd>滾輪</kbd>縮放、拖背景平移、<kbd>R</kbd>重置。</div>
       </div>
     </aside>
 
@@ -186201,15 +186201,19 @@ render = function () {
     p.addEventListener('click', () => showDetail(xe.b.xkind ? xe.b : xe.a));
     gEdge.appendChild(p); xe.el = p;
   });
-  // 區塊標題
-  const head = (t, nodes, above) => {
-    if (!nodes.length) return;
-    const y = above ? Math.min(...nodes.map(n => n.y)) - 34 : Math.min(...nodes.map(n => n.y)) - 26;
-    gHead.appendChild(SVGEL('text', { x: 0, y, 'text-anchor': 'middle', 'font-size': 13, fill: C.ink3,
-      'letter-spacing': '.1em', text: t }));
-  };
-  head('持股公司（變動財產申報）', G.nodes.filter(n => n.xkind === 'stk'), true);
-  head('相關質詢（本人質詢題目比對）', G.nodes.filter(n => n.xkind === 'int'), false);
+  // 區塊標題：改由各區塊節點的位置計算，節點移動時標題跟著走；拖曳標題可整區移動
+  while (gHead.firstChild) gHead.removeChild(gHead.firstChild);
+  G.heads = xSections();
+  G.heads.forEach(h => {
+    const p = xHeadPos(h);
+    const el = SVGEL('text', { x: p.x, y: p.y, 'text-anchor': 'middle', 'font-size': 13,
+      fill: h.warn ? C.outzone : C.ink3, 'font-weight': h.warn ? 600 : 400, 'letter-spacing': '.1em', text: h.t });
+    el.style.cursor = 'move';
+    const tt = SVGEL('title', { text: '拖曳標題可整區移動（' + h.m.length + ' 個節點）' });
+    el.appendChild(tt);
+    el.addEventListener('pointerdown', ev => beginDrag(ev, h.m, el));
+    gHead.appendChild(el); h.el = el;
+  });
   if (G.xinfo) {
     const i = G.xinfo, parts = [$('#netInfo').textContent];
     parts.push('持股公司 ' + i.stk + '/' + i.stkAll, '相關質詢 ' + i.int, '交叉關聯 ' + i.x);
@@ -186221,12 +186225,43 @@ render = function () {
 const _beginDrag = beginDrag;
 beginDrag = function (ev, list, el) {
   _beginDrag(ev, list, el);
-  if (!G.xedges || !G.xedges.length || !drag.on) return;
-  const mv = () => G.xedges.forEach(x => { if (x.el) x.el.setAttribute('d', xPath(x.a, x.b)); });
+  if (!drag.on) return;
+  const mv = () => {
+    (G.xedges || []).forEach(x => { if (x.el) x.el.setAttribute('d', xPath(x.a, x.b)); });
+    xUpdHeads();
+  };
   const up = () => { mv(); window.removeEventListener('pointermove', mv, true); window.removeEventListener('pointerup', up, true); };
   window.addEventListener('pointermove', mv, true);
   window.addEventListener('pointerup', up, true);
 };
+function xSections() {
+  const L = G.nodes.filter(n => n.role !== 'center');
+  const LT = { pol: '捐獻來源', comp: '關聯企業', person: '任職企業' };
+  const RT = { pol: '支出對象', comp: '相關政治人物', person: '往來申報人' };
+  const secs = [];
+  const left = L.filter(n => n.dir === -1 && !n.xkind), right = L.filter(n => n.dir === 1 && !n.xkind);
+  if (left.length) {
+    if (S.kind === 'pol' && $('#zoneSplit').checked && G.lOutCount) {
+      const a = left.filter(n => !n.outZone), b = left.filter(n => n.outZone);
+      if (a.length) secs.push({ t: '捐獻來源（轄區內）', m: a, side: -1, dy: 34 });
+      if (b.length) secs.push({ t: '捐獻來源（轄區外）', m: b, side: -1, dy: 34, warn: true });
+    } else secs.push({ t: LT[S.kind] || '', m: left, side: -1, dy: 40 });
+  }
+  if (right.length) secs.push({ t: RT[S.kind] || '', m: right, side: 1, dy: 40 });
+  const stk = L.filter(n => n.xkind === 'stk' || n.xkind === 'tnd');
+  if (stk.length) secs.push({ t: '持股公司（變動財產申報）', m: stk, side: 0, dy: 34 });
+  const it = L.filter(n => n.xkind === 'int');
+  if (it.length) secs.push({ t: '相關質詢（本人質詢題目比對）', m: it, side: 0, dy: 26 });
+  return secs.filter(h => h.t);
+}
+function xHeadPos(h) {
+  const xs = h.m.map(n => n.x), ys = h.m.map(n => n.y);
+  const x = h.side < 0 ? Math.max(...xs) : h.side > 0 ? Math.min(...xs) : (Math.min(...xs) + Math.max(...xs)) / 2;
+  return { x, y: Math.min(...ys) - h.dy };
+}
+function xUpdHeads() {
+  (G.heads || []).forEach(h => { if (!h.el) return; const p = xHeadPos(h); h.el.setAttribute('x', p.x); h.el.setAttribute('y', p.y); });
+}
 const _recenter = recenter;
 recenter = function (n) {
   if (n && n.xkind) {
@@ -186697,7 +186732,7 @@ const XG = {
   idx: null, cache: new Map(), view: Store.get('xgView', 'tbl'), per: Store.get('xgPer', 15),
   onlyHit: Store.get('xgOnly', false), queried: new Set(),
   kinds: Store.get('xgKinds', { dir: true, pair: true, rep: true, parent: true, child: true, addr: true, hq: true }),
-  V: { tx: 0, ty: 0, k: 1 }
+  V: { tx: 0, ty: 0, k: 1 }, dragMode: Store.get('xgDrag', 'group'), pos: null, posWho: ''
 };
 const XG_LBL = { dir: '共用董監事', pair: '同一人代表同一法人', rep: '同一法人股東指派', parent: '法人股東（上層）',
   child: '轉投資（下層）', addr: '同一營業地址', hq: '總機構／分支機構' };
@@ -186862,7 +186897,8 @@ function xgRender(CA) {
     + '（重複出現於多檔者分別計）。關聯企業只能在原檔內嵌的董監事與稅籍資料範圍內找到，不是完整的集團名單；'
     + '只認直接關係，不做多層串連；政府機關與代表超過 20 家公司的法人不採計。</div>';
   if (XG.view === 'fig') h += '<div class="stage" id="xgStage" style="height:calc(100vh - 330px);min-height:420px"><svg id="xgNet"></svg>'
-    + '<div class="stagebar"><span class="chip" id="xgInfo"></span><span class="zoom"><button id="xgIn">＋</button><button id="xgOut">−</button><button id="xgFit">⟲</button></span></div></div>';
+    + '<div class="stagebar"><span class="chip" id="xgInfo"></span><span class="zoom"><button id="xgIn">＋</button><button id="xgOut">−</button><button id="xgFit" title="重置版面">⟲</button></span>'
+    + '<span class="zoom" title="拖曳時要移動單一節點，還是持股公司連同其關聯企業整組移動（按住 Shift 也可整組）"><button id="xgOne" class="wide">拖曳單一</button><button id="xgGrp" class="wide">拖曳整組</button></span></div></div>';
   else h += xgTable(rows);
   $('#x6body').innerHTML = h;
   $$('#x6body .xgbar input[data-k]').forEach(c => c.onchange = () => { XG.kinds[c.dataset.k] = c.checked; Store.set('xgKinds', XG.kinds); XS.caKey = ''; x6Render('grp'); });
@@ -186938,25 +186974,31 @@ function xgDraw(CA, rows) {
   show.forEach(r => {
     const kids = xgVisible(r);
     const hgt = Math.max(1, kids.length) * RH;
-    const sn = { kind: 'stk', x: 300, y: y + hgt / 2 - RH / 2, r, st: r.self };
+    const sn = { kind: 'stk', key: 's:' + r.g.s, x: 300, y: y + hgt / 2 - RH / 2, r, st: r.self, kids: [] };
     nodes.push(sn);
     kids.forEach((s, i) => {
-      const cn = { kind: 'co', x: 680, y: y + i * RH, s, g: r.g, parent: sn };
-      nodes.push(cn);
+      const cn = { kind: 'co', key: 'c:' + r.g.s + '|' + s.ban, x: 680, y: y + i * RH, s, g: r.g, parent: sn };
+      nodes.push(cn); sn.kids.push(cn);
     });
     y += hgt + GAP;
   });
-  const c = { kind: 'ctr', x: 0, y: Math.max(0, y - GAP) / 2 - RH / 2 };
+  const c = { kind: 'ctr', key: 'ctr', x: 0, y: Math.max(0, y - GAP) / 2 - RH / 2 };
+  const P = XG.pos || (XG.pos = new Map());
+  if (XG.posWho !== CA.name) { P.clear(); XG.posWho = CA.name; }
+  nodes.concat([c]).forEach(n => { const sv = P.get(n.key); if (sv) { n.x = sv.x; n.y = sv.y; } });
+  const edges = [];
   const path = (a, b) => { const mx = (a.x + b.x) / 2; return 'M' + a.x + ',' + a.y + ' C' + mx + ',' + a.y + ' ' + mx + ',' + b.y + ' ' + b.x + ',' + b.y; };
   const rad = st => st && st.tpAmt > 0 ? clamp(4 + 9 * Math.sqrt(st.tpAmt / maxTp), 4, 13) : 4.5;
   const fill = st => !st || !st.q ? '#fff' : st.tpN > 0 ? XC.tnd : st.n > 0 ? '#AAB4BD' : '#D9DEE3';
   nodes.forEach(n => {
-    if (n.kind === 'stk') gE.appendChild(SVGEL('path', { d: path(c, n), fill: 'none', stroke: XC.stk, 'stroke-width': 1.6, 'stroke-opacity': .55 }));
+    let e = null;
+    if (n.kind === 'stk') { e = { a: c, b: n, el: SVGEL('path', { d: path(c, n), fill: 'none', stroke: XC.stk, 'stroke-width': 1.6, 'stroke-opacity': .55 }) }; }
     if (n.kind === 'co') {
       const k = n.s.via[0].kind;
-      gE.appendChild(SVGEL('path', { d: path(n.parent, n), fill: 'none', stroke: XG_COL[k], 'stroke-width': 1.2, 'stroke-opacity': .6,
-        'stroke-dasharray': k === 'addr' || k === 'hq' ? '3 3' : '' }));
+      e = { a: n.parent, b: n, el: SVGEL('path', { d: path(n.parent, n), fill: 'none', stroke: XG_COL[k], 'stroke-width': 1.2, 'stroke-opacity': .6,
+        'stroke-dasharray': k === 'addr' || k === 'hq' ? '3 3' : '' }) };
     }
+    if (e) { gE.appendChild(e.el); edges.push(e); }
   });
   const label = (g, x, anchor, t, sub, col) => {
     g.appendChild(SVGEL('text', { x, y: 4, 'text-anchor': anchor, 'font-size': 12, fill: col || C.ink, stroke: '#FAFBFC', 'stroke-width': 3, 'paint-order': 'stroke', text: t }));
@@ -186968,16 +187010,49 @@ function xgDraw(CA, rows) {
   const gc = SVGEL('g', { transform: 'translate(' + c.x + ',' + c.y + ')' });
   gc.appendChild(SVGEL('rect', { x: -56, y: -16, width: 112, height: 32, rx: 3, fill: C.ink }));
   gc.appendChild(SVGEL('text', { x: 0, y: 5, 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600, fill: '#fff', text: CA.name }));
-  gN.appendChild(gc);
+  gN.appendChild(gc); c.el = gc; gc.style.cursor = 'move';
+  // 拖曳：單一節點，或整組（持股公司＋其關聯企業）；按住 Shift 一律整組
+  const setOf = (n, ev) => {
+    const whole = XG.dragMode === 'group' || (ev && ev.shiftKey);
+    if (n.kind === 'ctr') return whole ? [c].concat(nodes) : [c];
+    if (!whole) return [n];
+    const s0 = n.kind === 'stk' ? n : n.parent;
+    return [s0].concat(s0.kids);
+  };
+  const dragSt = { on: null, did: false };
+  const startDrag = (ev, n) => {
+    if (ev.button !== 0) return;
+    ev.stopPropagation();
+    const list = setOf(n, ev);
+    dragSt.on = { o: list.map(m => ({ m, x: m.x, y: m.y })), sx: ev.clientX, sy: ev.clientY }; dragSt.did = false;
+    const moved = new Set(list);
+    const mv = e => {
+      const d = dragSt.on; if (!d) return;
+      const dx = (e.clientX - d.sx) / XG.V.k, dy = (e.clientY - d.sy) / XG.V.k;
+      if (Math.abs(dx) + Math.abs(dy) > 2) dragSt.did = true;
+      d.o.forEach(o => { o.m.x = o.x + dx; o.m.y = o.y + dy; if (o.m.el) o.m.el.setAttribute('transform', 'translate(' + o.m.x + ',' + o.m.y + ')'); });
+      edges.forEach(ed => { if (moved.has(ed.a) || moved.has(ed.b)) ed.el.setAttribute('d', path(ed.a, ed.b)); });
+      hideTip();
+    };
+    const up = () => {
+      if (dragSt.on && dragSt.did) dragSt.on.o.forEach(o => P.set(o.m.key, { x: o.m.x, y: o.m.y }));
+      dragSt.on = null;
+      window.removeEventListener('pointermove', mv, true); window.removeEventListener('pointerup', up, true);
+      setTimeout(() => { dragSt.did = false; }, 30);
+    };
+    window.addEventListener('pointermove', mv, true); window.addEventListener('pointerup', up, true);
+  };
+  gc.addEventListener('pointerdown', ev => startDrag(ev, c));
   nodes.forEach(n => {
     const g = SVGEL('g', { transform: 'translate(' + n.x + ',' + n.y + ')' });
-    g.style.cursor = 'pointer';
+    g.style.cursor = 'move'; n.el = g;
+    g.addEventListener('pointerdown', ev => startDrag(ev, n));
     if (n.kind === 'stk') {
       g.appendChild(SVGEL('circle', { r: rad(n.st) + 2, fill: XC.stk, stroke: n.st && n.st.tpN ? XC.tnd : '#fff', 'stroke-width': n.st && n.st.tpN ? 3 : 1.4 }));
       g.appendChild(SVGEL('text', { x: 0, y: -14, 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 600, fill: C.ink, stroke: '#FAFBFC', 'stroke-width': 3, 'paint-order': 'stroke',
         text: n.r.g.s + '（關聯 ' + n.r.sibs.length + ' 家）' }));
       g.appendChild(SVGEL('text', { x: 0, y: 24, 'text-anchor': 'middle', 'font-size': 10, fill: C.ink3, stroke: '#FAFBFC', 'stroke-width': 3, 'paint-order': 'stroke', text: badge(n.st) }));
-      g.addEventListener('click', () => xgModal(CA, n.r.g.ban, n.r.g.s));
+      g.addEventListener('click', () => { if (!dragSt.did) xgModal(CA, n.r.g.ban, n.r.g.s); });
       g.addEventListener('mouseenter', ev => showTip(ev, '<h3>' + esc(n.r.g.s) + '</h3><div class="mo">' + esc(n.r.g.o.full || '') + '　' + esc(n.r.g.ban) + '</div><div>'
         + esc(badge(n.st)) + '</div><div class="mo">所有人：' + esc(Array.from(n.r.g.owners).join('、')) + '</div><div class="mo">單擊看本身得標明細</div>'));
     } else {
@@ -186986,7 +187061,7 @@ function xgDraw(CA, rows) {
       const warn = st.near && Math.abs(st.near.dd) <= XCFG.win;
       if (warn) g.appendChild(SVGEL('circle', { r: rad(st) + 3.5, fill: 'none', stroke: XC.flag, 'stroke-width': 2 }));
       label(g, rad(st) + 7, 'start', trunc(n.s.name, 22), badge(st), warn ? XC.flag : C.ink);
-      g.addEventListener('click', () => xgModal(CA, n.s.ban, n.g.s));
+      g.addEventListener('click', () => { if (!dragSt.did) xgModal(CA, n.s.ban, n.g.s); });
       g.addEventListener('mouseenter', ev => showTip(ev, '<h3>' + esc(n.s.name) + '</h3><div class="mo">' + n.s.ban + '　與 ' + esc(n.g.s) + ' 的關係</div><table>'
         + n.s.via.slice(0, 8).map(v => '<tr><td>' + esc(XG_LBL[v.kind]) + '</td><td>' + esc(v.text) + '</td></tr>').join('') + '</table><div>' + esc(badge(st))
         + '</div><div class="mo">單擊看得標明細</div>'));
@@ -186995,10 +187070,11 @@ function xgDraw(CA, rows) {
     g.addEventListener('mouseleave', hideTip);
     gN.appendChild(g);
   });
-  XG.vp = vp; XG.bbox = { x0: -80, x1: 1000, y0: -40, y1: Math.max(y, 60) };
+  XG.vp = vp; XG.nodesAll = nodes.concat([c]);
+  XG.bbox = { x0: -80, x1: 1000, y0: -40, y1: Math.max(y, 60) };
   const nCo = nodes.filter(n => n.kind === 'co').length, nHit = nodes.filter(n => n.kind === 'co' && n.s.st.tpN > 0).length;
   $('#xgInfo').textContent = '持股公司 ' + nodes.filter(n => n.kind === 'stk').length + '　關聯企業 ' + nCo + '（其中臺北市相關得標 ' + nHit + ' 家）'
-    + '　滾輪上下捲動、Ctrl＋滾輪縮放、拖曳平移。圓大小＝臺北市相關得標金額；綠色實心＝有臺北市相關得標；灰＝只有其他機關；白＝未查詢；紅圈＝距買賣 ≤ ' + XCFG.win + ' 天';
+    + '　滾輪上下捲動、Ctrl＋滾輪縮放、拖曳背景平移、拖曳節點排版。圓大小＝臺北市相關得標金額；綠色實心＝有臺北市相關得標；灰＝只有其他機關；白＝未查詢；紅圈＝距買賣 ≤ ' + XCFG.win + ' 天';
   xgFit();
   let pan = null;
   svg.addEventListener('wheel', e => {
@@ -187012,7 +187088,9 @@ function xgDraw(CA, rows) {
   svg.addEventListener('pointerup', () => { pan = null; }); svg.addEventListener('pointerleave', () => { pan = null; });
   $('#xgIn').onclick = () => { XG.V.k = clamp(XG.V.k * 1.2, .08, 4); xgTf(); };
   $('#xgOut').onclick = () => { XG.V.k = clamp(XG.V.k / 1.2, .08, 4); xgTf(); };
-  $('#xgFit').onclick = xgFit;
+  $('#xgFit').onclick = () => { P.clear(); x6Render('grp'); };
+  const md = m => { XG.dragMode = m; Store.set('xgDrag', m); $('#xgOne').classList.toggle('on', m === 'one'); $('#xgGrp').classList.toggle('on', m === 'group'); };
+  $('#xgOne').onclick = () => md('one'); $('#xgGrp').onclick = () => md('group'); md(XG.dragMode);
 }
 function xgTf() { if (XG.vp) XG.vp.setAttribute('transform', 'translate(' + XG.V.tx + ',' + XG.V.ty + ') scale(' + XG.V.k + ')'); }
 function xgFit() {
@@ -187022,9 +187100,14 @@ function xgFit() {
   XG.V.tx = -b.x0 * XG.V.k + Math.max(0, (r.width - w * XG.V.k) / 2); XG.V.ty = -b.y0 * XG.V.k + 46;
   xgTf();
 }
+function xgLiveBox() {
+  const ns = XG.nodesAll || []; if (!ns.length) return XG.bbox;
+  const xs = ns.map(n => n.x), ys = ns.map(n => n.y);
+  return { x0: Math.min(...xs) - 80, x1: Math.max(...xs) + 340, y0: Math.min(...ys) - 40, y1: Math.max(...ys) + 40 };
+}
 function xgExport(CA) {
   if (!XG.vp) return;
-  const b = XG.bbox, w = b.x1 - b.x0 + 200, h = b.y1 - b.y0 + 120;
+  const b = xgLiveBox(), w = b.x1 - b.x0 + 200, h = b.y1 - b.y0 + 120;
   const out = SVGEL('svg', { xmlns: 'http://www.w3.org/2000/svg', width: w, height: h, viewBox: (b.x0 - 40) + ' ' + (b.y0 - 70) + ' ' + w + ' ' + h });
   out.appendChild(SVGEL('rect', { x: b.x0 - 40, y: b.y0 - 70, width: w, height: h, fill: '#fff' }));
   out.appendChild(SVGEL('text', { x: b.x0 - 20, y: b.y0 - 40, 'font-size': 16, 'font-weight': 600, fill: C.ink,
